@@ -2,6 +2,7 @@ package shim
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
@@ -78,78 +79,84 @@ var (
 	_ = shim.TTRPCService(&vinoTaskService{})
 )
 
-type vinoTaskService struct {
+type VinoOptions struct {
+	DelegatedRuntimePath string `json:"delegated_runtime_path,omitempty"`
 }
 
-func (s *vinoTaskService) RegisterTTRPC(server *ttrpc.Server) error {
-	taskAPI.RegisterTaskService(server, s)
+type vinoTaskService struct {
+	opts *VinoOptions
+}
+
+func (v *vinoTaskService) RegisterTTRPC(server *ttrpc.Server) error {
+	taskAPI.RegisterTaskService(server, v)
 	return nil
 }
 
-func (s *vinoTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *taskAPI.CreateTaskResponse, err error) {
+func (v *vinoTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *taskAPI.CreateTaskResponse, err error) {
+	json.Unmarshal(r.GetOptions().GetValue(), v.opts)
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
+func (v *vinoTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {
+func (v *vinoTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (*ptypes.Empty, error) {
+func (v *vinoTaskService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (*ptypes.Empty, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
+func (v *vinoTaskService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) State(ctx context.Context, r *taskAPI.StateRequest) (*taskAPI.StateResponse, error) {
+func (v *vinoTaskService) State(ctx context.Context, r *taskAPI.StateRequest) (*taskAPI.StateResponse, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptypes.Empty, error) {
+func (v *vinoTaskService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptypes.Empty, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*ptypes.Empty, error) {
+func (v *vinoTaskService) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*ptypes.Empty, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes.Empty, error) {
+func (v *vinoTaskService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes.Empty, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) Pids(ctx context.Context, r *taskAPI.PidsRequest) (*taskAPI.PidsResponse, error) {
+func (v *vinoTaskService) Pids(ctx context.Context, r *taskAPI.PidsRequest) (*taskAPI.PidsResponse, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*ptypes.Empty, error) {
+func (v *vinoTaskService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*ptypes.Empty, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) Checkpoint(ctx context.Context, r *taskAPI.CheckpointTaskRequest) (*ptypes.Empty, error) {
+func (v *vinoTaskService) Checkpoint(ctx context.Context, r *taskAPI.CheckpointTaskRequest) (*ptypes.Empty, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) Connect(ctx context.Context, r *taskAPI.ConnectRequest) (*taskAPI.ConnectResponse, error) {
+func (v *vinoTaskService) Connect(ctx context.Context, r *taskAPI.ConnectRequest) (*taskAPI.ConnectResponse, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) Shutdown(ctx context.Context, r *taskAPI.ShutdownRequest) (*ptypes.Empty, error) {
+func (v *vinoTaskService) Shutdown(ctx context.Context, r *taskAPI.ShutdownRequest) (*ptypes.Empty, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) Stats(ctx context.Context, r *taskAPI.StatsRequest) (*taskAPI.StatsResponse, error) {
+func (v *vinoTaskService) Stats(ctx context.Context, r *taskAPI.StatsRequest) (*taskAPI.StatsResponse, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) (*ptypes.Empty, error) {
+func (v *vinoTaskService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) (*ptypes.Empty, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *vinoTaskService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
+func (v *vinoTaskService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
 	return nil, errdefs.ErrNotImplemented
 }
