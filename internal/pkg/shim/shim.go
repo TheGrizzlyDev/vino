@@ -2,7 +2,6 @@ package shim
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
@@ -70,8 +69,6 @@ func (m manager) Info(ctx context.Context, optionsR io.Reader) (*apitypes.Runtim
 }
 
 func newTaskService(ctx context.Context, publisher shim.Publisher, sd shutdown.Service) (taskAPI.TaskService, error) {
-	// The shim.Publisher and shutdown.Service are usually useful for your task service,
-	// but we don't need them in the vinoTaskService.
 	return &vinoTaskService{}, nil
 }
 
@@ -92,8 +89,7 @@ func (v *vinoTaskService) RegisterTTRPC(server *ttrpc.Server) error {
 	return nil
 }
 
-func (v *vinoTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *taskAPI.CreateTaskResponse, err error) {
-	json.Unmarshal(r.GetOptions().GetValue(), v.opts)
+func (v *vinoTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (*taskAPI.CreateTaskResponse, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
