@@ -2,8 +2,10 @@ package shim
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 
+	"github.com/TheGrizzlyDev/vino/internal/pkg/runc"
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
 	apitypes "github.com/containerd/containerd/api/types"
 	ptypes "github.com/containerd/containerd/v2/pkg/protobuf/types"
@@ -82,6 +84,7 @@ type VinoOptions struct {
 
 type vinoTaskService struct {
 	opts *VinoOptions
+	cli  runc.Cli
 }
 
 func (v *vinoTaskService) RegisterTTRPC(server *ttrpc.Server) error {
@@ -90,6 +93,14 @@ func (v *vinoTaskService) RegisterTTRPC(server *ttrpc.Server) error {
 }
 
 func (v *vinoTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (*taskAPI.CreateTaskResponse, error) {
+	json.Unmarshal(r.GetOptions().GetValue(), v.opts)
+	cli, err := runc.NewDelegatingCliClient(v.opts.DelegatedRuntimePath)
+
+	if err != nil {
+		return nil, errdefs.ErrInvalidArgument.WithMessage(err.Error())
+	}
+
+	v.cli = cli
 	return nil, errdefs.ErrNotImplemented
 }
 
