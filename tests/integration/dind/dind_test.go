@@ -36,6 +36,13 @@ func TestRuntimeParity(t *testing.T) {
 		Started:          true,
 	})
 	if err != nil {
+		if cont != nil {
+			logReader, logErr := cont.Logs(ctx)
+			if logErr == nil {
+				out, _ := io.ReadAll(logReader)
+				t.Logf("container logs:\n%s", string(out))
+			}
+		}
 		t.Fatalf("failed to start container: %v", err)
 	}
 	defer func() {

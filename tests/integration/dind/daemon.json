@@ -1,0 +1,10 @@
+{
+    "runtimes": {
+      "vinoc": {
+        "path": "/usr/local/sbin/vinoc",
+        "options": {
+          "delegated_runtime_path": "/usr/local/bin/runc"
+        }
+      }
+    }
+  }

@@ -5,7 +5,6 @@ RUN go build -o ./vinoc ./cmd/vinoc
 
 FROM docker:dind
 COPY --from=build /src/vinoc /usr/local/sbin/vinoc
-COPY tests/integration/dind/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+RUN mkdir -p /etc/docker
+COPY tests/integration/dind/daemon.json /etc/docker/daemon.json
 CMD []

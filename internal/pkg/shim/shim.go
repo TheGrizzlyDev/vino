@@ -85,7 +85,7 @@ var (
 )
 
 type VinoOptions struct {
-	DelegatedRuntimePath string `json:"delegated_runtime_path,omitempty"`
+	DelegatedRuntimePath string `json:"delegated_runtime_path"`
 }
 
 type vinoTaskService struct {
@@ -99,7 +99,12 @@ func (v *vinoTaskService) RegisterTTRPC(server *ttrpc.Server) error {
 }
 
 func (v *vinoTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (*taskAPI.CreateTaskResponse, error) {
-	json.Unmarshal(r.GetOptions().GetValue(), v.opts)
+	v.opts = &VinoOptions{}
+	if opts := r.GetOptions(); opts != nil {
+		if err := json.Unmarshal(opts.GetValue(), v.opts); err != nil {
+			return nil, errdefs.ErrInvalidArgument.WithMessage(err.Error())
+		}
+	}
 	cli, err := runc.NewDelegatingCliClient(v.opts.DelegatedRuntimePath)
 	if err != nil {
 		return nil, errdefs.ErrInvalidArgument.WithMessage(err.Error())
