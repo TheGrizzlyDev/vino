@@ -7,11 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"syscall"
+	"time"
 
 	"github.com/TheGrizzlyDev/vino/internal/pkg/runc"
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
 	apitypes "github.com/containerd/containerd/api/types"
 	tasktypes "github.com/containerd/containerd/api/types/task"
+	"github.com/containerd/containerd/v2/pkg/namespaces"
 	ptypes "github.com/containerd/containerd/v2/pkg/protobuf/types"
 	"github.com/containerd/containerd/v2/pkg/shim"
 	"github.com/containerd/containerd/v2/pkg/shutdown"
@@ -59,11 +62,70 @@ func (m manager) Name() string {
 }
 
 func (m manager) Start(ctx context.Context, id string, opts shim.StartOpts) (shim.BootstrapParams, error) {
-	return shim.BootstrapParams{}, errdefs.ErrNotImplemented
+	params := shim.BootstrapParams{
+		Version:  2,
+		Protocol: "ttrpc",
+	}
+
+	ns, err := namespaces.NamespaceRequired(ctx)
+	if err != nil {
+		return params, err
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return params, err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return params, err
+	}
+
+	args := []string{"-namespace", ns, "-id", id, "-address", opts.Address}
+	if opts.Debug {
+		args = append(args, "-debug")
+	}
+	cmd := exec.Command(self, args...)
+	cmd.Dir = cwd
+	cmd.Env = append(os.Environ(), "GOMAXPROCS=4")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	address, err := shim.SocketAddress(ctx, opts.Address, id, false)
+	if err != nil {
+		return params, err
+	}
+	l, err := shim.NewSocket(address)
+	if err != nil {
+		return params, err
+	}
+	f, err := l.File()
+	if err != nil {
+		l.Close()
+		return params, err
+	}
+	cmd.ExtraFiles = append(cmd.ExtraFiles, f)
+
+	if err := cmd.Start(); err != nil {
+		f.Close()
+		l.Close()
+		return params, err
+	}
+	go cmd.Wait()
+	f.Close()
+	l.Close()
+
+	if err := shim.AdjustOOMScore(cmd.Process.Pid); err != nil {
+		return params, err
+	}
+
+	params.Address = address
+	return params, nil
 }
 
 func (m manager) Stop(ctx context.Context, id string) (shim.StopStatus, error) {
-	return shim.StopStatus{}, errdefs.ErrNotImplemented
+	return shim.StopStatus{
+		ExitStatus: 0,
+		ExitedAt:   time.Now(),
+	}, nil
 }
 
 func (m manager) Info(ctx context.Context, optionsR io.Reader) (*apitypes.RuntimeInfo, error) {
