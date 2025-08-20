@@ -156,8 +156,7 @@ type VinoOptions struct {
 }
 
 type vinoTaskService struct {
-	opts *VinoOptions
-	cli  runc.Cli
+	cli runc.Cli
 }
 
 func (v *vinoTaskService) RegisterTTRPC(server *ttrpc.Server) error {
@@ -166,13 +165,21 @@ func (v *vinoTaskService) RegisterTTRPC(server *ttrpc.Server) error {
 }
 
 func (v *vinoTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (*taskAPI.CreateTaskResponse, error) {
-	v.opts = &VinoOptions{}
-	if opts := r.GetOptions(); opts != nil {
-		if err := json.Unmarshal(opts.GetValue(), v.opts); err != nil {
+	var opts VinoOptions
+	if o := r.GetOptions(); o != nil && len(o.GetValue()) > 0 {
+		if err := json.Unmarshal(o.GetValue(), &opts); err != nil {
 			return nil, errdefs.ErrInvalidArgument.WithMessage(err.Error())
 		}
 	}
-	cli, err := runc.NewDelegatingCliClient(v.opts.DelegatedRuntimePath)
+	path := opts.DelegatedRuntimePath
+	if path == "" {
+		p, err := exec.LookPath("runc")
+		if err != nil {
+			return nil, errdefs.ErrInvalidArgument.WithMessage("delegated runtime path not provided")
+		}
+		path = p
+	}
+	cli, err := runc.NewDelegatingCliClient(path)
 	if err != nil {
 		return nil, errdefs.ErrInvalidArgument.WithMessage(err.Error())
 	}

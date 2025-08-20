@@ -49,14 +49,14 @@ func TestRuntimeParity(t *testing.T) {
 		_ = cont.Terminate(ctx)
 	}()
 
-	runCase := func(cmd string) {
+	runCase := func(runtime, cmd string) {
 		runcCode, runcReader, err := cont.Exec(ctx, []string{"sh", "-c", "docker run --rm " + cmd}, tcexec.Multiplexed())
 		if err != nil {
 			t.Fatalf("runc exec failed for %q: %v", cmd, err)
 		}
-		vinocCode, vinocReader, err := cont.Exec(ctx, []string{"sh", "-c", "docker run --rm --runtime vinoc " + cmd}, tcexec.Multiplexed())
+		vinocCode, vinocReader, err := cont.Exec(ctx, []string{"sh", "-c", "docker run --rm --runtime " + runtime + " " + cmd}, tcexec.Multiplexed())
 		if err != nil {
-			t.Fatalf("vinoc exec failed for %q: %v", cmd, err)
+			t.Fatalf("%s exec failed for %q: %v", runtime, cmd, err)
 		}
 		runcOut, err := io.ReadAll(runcReader)
 		if err != nil {
@@ -64,13 +64,13 @@ func TestRuntimeParity(t *testing.T) {
 		}
 		vinocOut, err := io.ReadAll(vinocReader)
 		if err != nil {
-			t.Fatalf("read vinoc output: %v", err)
+			t.Fatalf("read %s output: %v", runtime, err)
 		}
 		if runcCode != vinocCode || string(runcOut) != string(vinocOut) {
-			t.Fatalf("mismatch for %q: runc [%d] %q vs vinoc [%d] %q", cmd, runcCode, string(runcOut), vinocCode, string(vinocOut))
+			t.Fatalf("mismatch for %q: runc [%d] %q vs %s [%d] %q", cmd, runcCode, string(runcOut), runtime, vinocCode, string(vinocOut))
 		}
 	}
 
-	runCase("alpine echo hello")
-	runCase("alpine false")
+	runCase("vinoc", "alpine echo hello")
+	runCase("vinoc", "alpine false")
 }
