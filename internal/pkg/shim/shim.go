@@ -109,9 +109,14 @@ func (m manager) Start(ctx context.Context, id string, opts shim.StartOpts) (shi
 		l.Close()
 		return params, err
 	}
-	go cmd.Wait()
-	f.Close()
-	l.Close()
+	// Keep the socket and file descriptors open until the shim has
+	// accepted containerd's connection. Once the shim process exits the
+	// descriptors are closed allowing the socket file to be removed.
+	go func() {
+		_ = cmd.Wait()
+		f.Close()
+		l.Close()
+	}()
 
 	if err := shim.AdjustOOMScore(cmd.Process.Pid); err != nil {
 		return params, err
