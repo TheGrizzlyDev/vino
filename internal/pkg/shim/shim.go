@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -185,10 +187,11 @@ func (v *vinoTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	}
 	v.cli = cli
 
+	pidFilePath := filepath.Join(r.Bundle, "pidfile")
 	cmd := runc.Create{
 		BundleOpt:        runc.BundleOpt{Bundle: r.Bundle},
 		ConsoleSocketOpt: runc.ConsoleSocketOpt{ConsoleSocket: r.Stdin},
-		PidFileOpt:       runc.PidFileOpt{PidFile: r.Stdin},
+		PidFileOpt:       runc.PidFileOpt{PidFile: pidFilePath},
 		ContainerID:      r.ID,
 	}
 	ecmd, err := v.cli.Command(ctx, cmd)
@@ -198,7 +201,15 @@ func (v *vinoTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	if err := ecmd.Run(); err != nil {
 		return nil, err
 	}
-	resp := &taskAPI.CreateTaskResponse{Pid: uint32(ecmd.Process.Pid)}
+	pidData, err := os.ReadFile(pidFilePath)
+	if err != nil {
+		return nil, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
+	if err != nil {
+		return nil, err
+	}
+	resp := &taskAPI.CreateTaskResponse{Pid: uint32(pid)}
 	return resp, nil
 }
 
@@ -211,7 +222,22 @@ func (v *vinoTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 	if err := ecmd.Run(); err != nil {
 		return nil, err
 	}
-	return &taskAPI.StartResponse{Pid: uint32(ecmd.Process.Pid)}, nil
+	stateCmd := runc.State{ContainerID: r.ID}
+	stateEcmd, err := v.cli.Command(ctx, stateCmd)
+	if err != nil {
+		return nil, err
+	}
+	out, err := stateEcmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var rs struct {
+		Pid uint32 `json:"pid"`
+	}
+	if err := json.Unmarshal(out, &rs); err != nil {
+		return nil, err
+	}
+	return &taskAPI.StartResponse{Pid: rs.Pid}, nil
 }
 
 func (v *vinoTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {
@@ -433,18 +459,52 @@ func (v *vinoTaskService) Update(ctx context.Context, r *taskAPI.UpdateTaskReque
 }
 
 func (v *vinoTaskService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
-	cmd := runc.State{ContainerID: r.ID}
-	ecmd, err := v.cli.Command(ctx, cmd)
+	cmd, err := v.cli.Command(ctx, runc.Events{ContainerID: r.ID})
 	if err != nil {
 		return nil, err
 	}
-	out, err := ecmd.Output()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
 	}
-	var rs struct {
-		ExitStatus uint32 `json:"status"`
+	if err := cmd.Start(); err != nil {
+		return nil, err
 	}
-	json.Unmarshal(out, &rs)
-	return &taskAPI.WaitResponse{ExitStatus: rs.ExitStatus}, nil
+	defer cmd.Wait()
+
+	errCh := make(chan error, 1)
+	eventCh := make(chan *taskAPI.WaitResponse, 1)
+
+	go func() {
+		decoder := json.NewDecoder(stdout)
+		for {
+			var event struct {
+				Type string `json:"type"`
+				Data struct {
+					ExitStatus int `json:"exit_status"`
+				} `json:"data"`
+			}
+			if err := decoder.Decode(&event); err != nil {
+				if err == io.EOF {
+					errCh <- errdefs.ErrNotFound
+					return
+				}
+				errCh <- err
+				return
+			}
+			if event.Type == "exit" {
+				eventCh <- &taskAPI.WaitResponse{ExitStatus: uint32(event.Data.ExitStatus)}
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case err := <-errCh:
+		return nil, err
+	case event := <-eventCh:
+		return event, nil
+	}
 }
