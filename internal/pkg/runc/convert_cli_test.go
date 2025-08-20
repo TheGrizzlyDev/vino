@@ -266,6 +266,22 @@ type BadMultipleSeparatorsGroup struct {
 func (BadMultipleSeparatorsGroup) Subcommand() string { return "bad-seps" }
 func (BadMultipleSeparatorsGroup) Groups() []string   { return []string{"x", "--", "--"} }
 
+// BadAltNoFlag: runc_flag_alternatives present without runc_flag.
+type BadAltNoFlag struct {
+	A bool `runc_flag_alternatives:"-a"`
+}
+
+func (BadAltNoFlag) Subcommand() string { return "bad-alt-no-flag" }
+func (BadAltNoFlag) Groups() []string   { return []string{"g"} }
+
+// BadAltInvalid: runc_flag_alternatives contains invalid flag.
+type BadAltInvalid struct {
+	Flag bool `runc_flag:"--flag" runc_flag_alternatives:"oops" runc_group:"g"`
+}
+
+func (BadAltInvalid) Subcommand() string { return "bad-alt-invalid" }
+func (BadAltInvalid) Groups() []string   { return []string{"g"} }
+
 // SliceFlagsAndArgsStruct: simple type to check repeated emission.
 type SliceFlagsAndArgsStruct struct {
 	Fs []string `runc_flag:"--fs" runc_group:"g"`
@@ -319,6 +335,24 @@ func TestConvertToCmdline_Fails_MultipleSeparatorsInGroups(t *testing.T) {
 	_, err := convertToCmdline(BadMultipleSeparatorsGroup{})
 	if err == nil {
 		t.Fatal("expected multiple-separators error, got nothing")
+	}
+}
+
+func TestConvertToCmdline_Fails_AltWithoutFlag(t *testing.T) {
+	t.Parallel()
+
+	_, err := convertToCmdline(BadAltNoFlag{})
+	if err == nil || !strings.Contains(err.Error(), "runc_flag_alternatives") {
+		t.Fatalf("expected runc_flag_alternatives error, got: %v", err)
+	}
+}
+
+func TestConvertToCmdline_Fails_InvalidAlt(t *testing.T) {
+	t.Parallel()
+
+	_, err := convertToCmdline(BadAltInvalid{})
+	if err == nil || !strings.Contains(err.Error(), "runc_flag_alternative") {
+		t.Fatalf("expected invalid runc_flag_alternative error, got: %v", err)
 	}
 }
 

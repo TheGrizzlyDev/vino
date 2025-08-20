@@ -6,7 +6,7 @@ package runc
 
 // BundleOpt holds the OCI bundle path.
 type BundleOpt struct {
-	Bundle string `runc_flag:"--bundle" runc_group:"bundle"`
+	Bundle string `runc_flag:"--bundle" runc_flag_alternatives:"-b" runc_group:"bundle"`
 }
 
 // ConsoleSocketOpt holds the console socket path.
@@ -28,12 +28,12 @@ type PivotKeyringFDsOpt struct {
 
 // DetachOpt for detach-capable commands (run/restore/exec).
 type DetachOpt struct {
-	Detach bool `runc_flag:"--detach" runc_group:"lifecycle"`
+	Detach bool `runc_flag:"--detach" runc_flag_alternatives:"-d" runc_group:"lifecycle"`
 }
 
 // FormatOpt standard output-format selector (table/json).
 type FormatOpt struct {
-	Format string `runc_flag:"--format" runc_group:"output" runc_enum:"table|json"`
+	Format string `runc_flag:"--format" runc_flag_alternatives:"-f" runc_group:"output" runc_enum:"table|json"`
 }
 
 // ------------------------------------------------------------
@@ -183,7 +183,7 @@ func (s Start) Groups() []string   { return []string{"global", "container_id"} }
 // ------------------------------------------------------------
 
 type Delete struct {
-	Force       bool   `runc_flag:"--force" runc_group:"common"`
+	Force       bool   `runc_flag:"--force" runc_flag_alternatives:"-f" runc_group:"common"`
 	ContainerID string `runc_argument:"container_id"`
 }
 
@@ -235,7 +235,7 @@ func (k Kill) Groups() []string   { return []string{"global", "common", "contain
 
 type List struct {
 	FormatOpt
-	Quiet bool `runc_flag:"--quiet" runc_group:"output"`
+	Quiet bool `runc_flag:"--quiet" runc_flag_alternatives:"-q" runc_group:"output"`
 }
 
 func (l List) Subcommand() string { return "list" }
@@ -295,15 +295,15 @@ type Exec struct {
 
 	// flags
 	Cwd            string   `runc_flag:"--cwd"            runc_group:"process"`
-	Env            []string `runc_flag:"--env"            runc_group:"process"` // key=value
-	Tty            bool     `runc_flag:"--tty"            runc_group:"process"`
-	User           string   `runc_flag:"--user"           runc_group:"process"` // uid[:gid]
-	AdditionalGids []uint   `runc_flag:"--additional-gids" runc_group:"process"`
-	Process        string   `runc_flag:"--process"        runc_group:"process"` // process.json
+	Env            []string `runc_flag:"--env"            runc_flag_alternatives:"-e" runc_group:"process"` // key=value
+	Tty            bool     `runc_flag:"--tty"            runc_flag_alternatives:"-t" runc_group:"process"`
+	User           string   `runc_flag:"--user"           runc_flag_alternatives:"-u" runc_group:"process"` // uid[:gid]
+	AdditionalGids []uint   `runc_flag:"--additional-gids" runc_flag_alternatives:"-g" runc_group:"process"`
+	Process        string   `runc_flag:"--process"        runc_flag_alternatives:"-p" runc_group:"process"` // process.json
 	ProcessLabel   string   `runc_flag:"--process-label"  runc_group:"security"`
 	AppArmor       string   `runc_flag:"--apparmor"       runc_group:"security"`
 	NoNewPrivs     bool     `runc_flag:"--no-new-privs"   runc_group:"security"`
-	Cap            []string `runc_flag:"--cap"            runc_group:"security"`
+	Cap            []string `runc_flag:"--cap"            runc_flag_alternatives:"-c" runc_group:"security"`
 	IgnorePaused   bool     `runc_flag:"--ignore-paused"  runc_group:"lifecycle"`
 	Cgroup         string   `runc_flag:"--cgroup"         runc_group:"cgroups"` // v1 semantics
 
@@ -342,7 +342,7 @@ type Update struct {
 	ContainerID string `runc_argument:"container_id"`
 
 	// flags (grouped)
-	ReadFromJSON string  `runc_flag:"-r"               runc_group:"mode"` // path or "-" for stdin
+	ReadFromJSON string  `runc_flag:"-r"               runc_flag_alternatives:"--resources" runc_group:"mode"` // path or "-" for stdin
 	CPUQuota     *int64  `runc_flag:"--cpu-quota"      runc_group:"cpu"`
 	CPUPeriod    *uint64 `runc_flag:"--cpu-period"     runc_group:"cpu"`
 	CPUShares    *uint64 `runc_flag:"--cpu-shares"     runc_group:"cpu"`

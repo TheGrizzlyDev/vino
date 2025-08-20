@@ -36,13 +36,18 @@ func validateCommandTags(cmd Command) error {
 	v := reflect.ValueOf(cmd)
 	walkStruct(v, func(sf reflect.StructField, fv reflect.Value) {
 		flag, hasFlag := sf.Tag.Lookup("runc_flag")
+		altSpec, hasAlt := sf.Tag.Lookup("runc_flag_alternatives")
 		argGroup, hasArg := sf.Tag.Lookup("runc_argument")
 		group, hasGroup := sf.Tag.Lookup("runc_group")
 		enum, hasEnum := sf.Tag.Lookup("runc_enum")
 
 		// skip untagged fields
-		if !hasFlag && !hasArg {
+		if !hasFlag && !hasArg && !hasAlt {
 			return
+		}
+
+		if hasAlt && !hasFlag {
+			errs = append(errs, fmt.Sprintf("%s: field %q has runc_flag_alternatives but no runc_flag", typ, sf.Name))
 		}
 
 		// mutually exclusive tags
@@ -67,6 +72,29 @@ func validateCommandTags(cmd Command) error {
 					errs = append(errs, fmt.Sprintf(`%s: field %q (flag %q) references group %q not present in Groups()`, typ, sf.Name, flag, group))
 				}
 			}
+			// alternatives
+			if hasAlt {
+				altsRaw := strings.Split(altSpec, "|")
+				var alts []string
+				for _, a := range altsRaw {
+					a = strings.TrimSpace(a)
+					if a == "" {
+						errs = append(errs, fmt.Sprintf("%s: field %q has empty runc_flag_alternative", typ, sf.Name))
+						continue
+					}
+					if !looksLikeFlag(a) {
+						errs = append(errs, fmt.Sprintf("%s: field %q runc_flag_alternative %q must start with '-' or '--'", typ, sf.Name, a))
+					}
+					if a == flag {
+						errs = append(errs, fmt.Sprintf("%s: field %q runc_flag_alternative %q duplicates runc_flag", typ, sf.Name, a))
+					}
+					alts = append(alts, a)
+				}
+				if dup := firstDuplicate(alts); dup != "" {
+					errs = append(errs, fmt.Sprintf("%s: field %q has duplicate runc_flag_alternative %q", typ, sf.Name, dup))
+				}
+			}
+
 			// enum (static) rules: must be applied only to string/*string and non-empty spec
 			if hasEnum {
 				if strings.TrimSpace(enum) == "" || !strings.Contains(enum, "|") {
