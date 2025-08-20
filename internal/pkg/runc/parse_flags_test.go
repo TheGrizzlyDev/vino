@@ -22,7 +22,7 @@ func TestParseFlags_Exec_MixedOrder(t *testing.T) {
 	}
 
 	var cmd Exec
-	if err := parseFlags(&cmd, args); err != nil {
+	if err := Parse(&cmd, args); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -56,7 +56,7 @@ func TestParseFlags_Update_MixedOrder(t *testing.T) {
 	}
 
 	var cmd Update
-	if err := parseFlags(&cmd, args); err != nil {
+	if err := Parse(&cmd, args); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -85,7 +85,7 @@ func TestParseFlags_Exec_FlagAfterArgFails(t *testing.T) {
 
 	args := []string{"--tty", "cid", "--no-pivot", "--", "/bin/sh"}
 	var cmd Exec
-	if err := parseFlags(&cmd, args); err == nil {
+	if err := Parse(&cmd, args); err == nil {
 		t.Fatalf("expected error, got nil")
 	}
 }

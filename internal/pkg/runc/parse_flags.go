@@ -7,13 +7,13 @@ import (
 	"strings"
 )
 
-// parseFlags reads args into cmd according to struct tags.
+// Parse reads args into cmd according to struct tags.
 // Flags from groups within the same contiguous segment may appear in any order.
 // The ordering is only enforced between argument groups, literal "--" markers,
 // and contiguous flag-group segments defined by cmd.Groups().
-func parseFlags[T Command](cmd *T, args []string) error {
+func Parse[T Command](cmd *T, args []string) error {
 	if cmd == nil {
-		return fmt.Errorf("parseFlags: nil cmd")
+		return fmt.Errorf("Parse: nil cmd")
 	}
 	// validate tags first
 	if err := validateCommandTags(*cmd); err != nil {
