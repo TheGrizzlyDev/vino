@@ -56,6 +56,10 @@ func Parse(cmd Command, args []string) error {
 		return err
 	}
 
+	// Support flags in the form --flag=value by splitting them into
+	// separate tokens before processing.
+	args = expandEquals(args)
+
 	type fieldInfo struct {
 		sf   reflect.StructField
 		val  reflect.Value
@@ -297,4 +301,20 @@ func setValue(v reflect.Value, val string) error {
 		}
 	}
 	return fmt.Errorf("unsupported field kind %s", v.Kind())
+}
+
+// expandEquals splits tokens of the form "--flag=value" or "-f=value" into
+// separate flag and value tokens so that standard flag processing can occur.
+func expandEquals(args []string) []string {
+	var out []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			if eq := strings.Index(a, "="); eq != -1 {
+				out = append(out, a[:eq], a[eq+1:])
+				continue
+			}
+		}
+		out = append(out, a)
+	}
+	return out
 }
