@@ -95,7 +95,11 @@ func testPermutations[T Command](t *testing.T, before []string, flags [][]string
 		}
 		args = append(args, after...)
 		var cmd T
-		if err := Parse(cmd, args); err != nil {
+		cmdPtr, ok := any(&cmd).(Command)
+		if !ok {
+			t.Fatalf("%T does not implement Command", cmd)
+		}
+		if err := Parse(cmdPtr, args); err != nil {
 			t.Fatalf("args %v: %v", args, err)
 		}
 		if !reflect.DeepEqual(cmd, expected) {
