@@ -1,10 +1,8 @@
 {
     "runtimes": {
-      "vinoc": {
-        "runtimeType": "io.containerd.vinoc.v1",
-        "options": {
-            "delegated_runtime_path": "/usr/local/bin/runc"
-        }
+      "delegatec": {
+        "path": "/usr/local/sbin/delegatec",
+        "runtimeArgs": ["--delegate_path", "/usr/local/bin/runc"]
       }
     }
   }

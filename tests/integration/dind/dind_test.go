@@ -16,8 +16,6 @@ import (
 )
 
 func TestRuntimeParity(t *testing.T) {
-	return
-
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -71,26 +69,26 @@ func TestRuntimeParity(t *testing.T) {
 		t.Logf("runc exited with %d", runcCode)
 		t.Logf("runc output:\n%s", string(runcOut))
 
-		// vinoc
+		// delegatec
 		t.Logf("executing with %s...", runtime)
-		vinocCode, vinocReader, err := cont.Exec(ctx, []string{"sh", "-c", "docker run --rm --network host --runtime " + runtime + " " + cmd}, tcexec.Multiplexed())
+		delegatecCode, delegatecReader, err := cont.Exec(ctx, []string{"sh", "-c", "docker run --rm --network host --runtime " + runtime + " " + cmd}, tcexec.Multiplexed())
 		if err != nil {
 			t.Fatalf("%s exec failed for %q: %v", runtime, cmd, err)
 		}
-		vinocOut, err := io.ReadAll(vinocReader)
+		delegatecOut, err := io.ReadAll(delegatecReader)
 		if err != nil {
 			t.Fatalf("read %s output: %v", runtime, err)
 		}
-		t.Logf("%s exited with %d", runtime, vinocCode)
-		t.Logf("%s output:\n%s", runtime, string(vinocOut))
+		t.Logf("%s exited with %d", runtime, delegatecCode)
+		t.Logf("%s output:\n%s", runtime, string(delegatecOut))
 
 		// comparison
-		if runcCode != vinocCode || string(runcOut) != string(vinocOut) {
-			t.Fatalf("mismatch for %q: runc [%d] %q vs %s [%d] %q", cmd, runcCode, string(runcOut), runtime, vinocCode, string(vinocOut))
+		if runcCode != delegatecCode || string(runcOut) != string(delegatecOut) {
+			t.Fatalf("mismatch for %q: runc [%d] %q vs %s [%d] %q", cmd, runcCode, string(runcOut), runtime, delegatecCode, string(delegatecOut))
 		}
 		t.Logf("--- case PASSED: %q ---", cmd)
 	}
 
-	runCase("vinoc", "alpine echo hello")
-	runCase("vinoc", "alpine false")
+	runCase("delegatec", "alpine echo hello")
+	runCase("delegatec", "alpine false")
 }
