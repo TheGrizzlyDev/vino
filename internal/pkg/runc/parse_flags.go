@@ -11,6 +11,9 @@ func ParseAny[T any](cmdUnion *T, args []string) error {
 	if cmdUnion == nil {
 		return fmt.Errorf("Parse: nil cmdUnion")
 	}
+	if len(args) == 0 {
+		return fmt.Errorf("Parse: missing subcommand")
+	}
 
 	v := reflect.ValueOf(cmdUnion).Elem()
 
@@ -25,7 +28,7 @@ func ParseAny[T any](cmdUnion *T, args []string) error {
 		if !ok {
 			return fmt.Errorf("field type '%s' does not implement Command", field.Type().Name())
 		}
-		if err := Parse(&cmd, args[1:]); err != nil {
+		if err := Parse(cmd, args[1:]); err != nil {
 			return err
 		}
 
@@ -44,12 +47,12 @@ func ParseAny[T any](cmdUnion *T, args []string) error {
 // Flags from groups within the same contiguous segment may appear in any order.
 // The ordering is only enforced between argument groups, literal "--" markers,
 // and contiguous flag-group segments defined by cmd.Groups().
-func Parse[T Command](cmd *T, args []string) error {
+func Parse(cmd Command, args []string) error {
 	if cmd == nil {
 		return fmt.Errorf("Parse: nil cmd")
 	}
 	// validate tags first
-	if err := validateCommandTags(*cmd); err != nil {
+	if err := validateCommandTags(cmd); err != nil {
 		return err
 	}
 
@@ -127,7 +130,7 @@ func Parse[T Command](cmd *T, args []string) error {
 
 	var segs []segment
 	var curFlagSeg []string
-	groups := (*cmd).Groups()
+	groups := cmd.Groups()
 	for _, g := range groups {
 		if g == "--" {
 			if len(curFlagSeg) > 0 {
