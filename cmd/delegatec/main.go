@@ -8,7 +8,7 @@ import (
 )
 
 type DelegatecCmd[T runc.Command] struct {
-	Command T
+	Command T `runc_embed:""`
 
 	DelegatePath string `runc_flag:"--delegate_path" runc_group:"delegate"`
 }

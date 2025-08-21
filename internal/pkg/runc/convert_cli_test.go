@@ -9,16 +9,17 @@ import (
 /* -------------------------- shared constants/vars -------------------------- */
 
 const (
-	socketPath  = "/tmp/tty.sock"
-	pidFilePath = "/tmp/pid"
-	workDir     = "/work"
-	containerID = "c1"
-	userSpec    = "1000:1000"
-	processJSON = "proc.json"
-	apparmor    = "docker-default"
-	selinuxLbl  = "system_u:system_r:container_t:s0"
-	cgroupPath  = "foo"
-	shellPath   = "/bin/sh"
+	socketPath   = "/tmp/tty.sock"
+	pidFilePath  = "/tmp/pid"
+	workDir      = "/work"
+	containerID  = "c1"
+	userSpec     = "1000:1000"
+	processJSON  = "proc.json"
+	apparmor     = "docker-default"
+	selinuxLbl   = "system_u:system_r:container_t:s0"
+	cgroupPath   = "foo"
+	shellPath    = "/bin/sh"
+	delegatePath = "/tmp/delegate"
 )
 
 var (
@@ -364,5 +365,37 @@ func TestConvertToCmdline_SliceFlagsAndArgs(t *testing.T) {
 		Is: []int{1, 2},
 	}
 	expected := []string{"slices", "--fs", "x", "--fs", "y", "1", "2"}
+	eq(t, mustConvert(t, cmd), expected)
+}
+
+// delegateWrapper is a helper used to verify that runc_embed expands named
+// fields when generating command lines.
+type delegateWrapper[T Command] struct {
+	Command T `runc_embed:""`
+
+	DelegatePath string `runc_flag:"--delegate_path" runc_group:"delegate"`
+}
+
+func (w delegateWrapper[T]) Subcommand() string { return w.Command.Subcommand() }
+
+func (w delegateWrapper[T]) Groups() []string {
+	return append([]string{"delegate"}, w.Command.Groups()...)
+}
+
+// TestConvertToCmdline_RuncEmbed ensures that fields tagged with runc_embed are
+// traversed during command line conversion so that nested flags and arguments
+// are emitted.
+func TestConvertToCmdline_RuncEmbed(t *testing.T) {
+	t.Parallel()
+
+	cmd := delegateWrapper[Run]{
+		Command: Run{
+			Keep:        true,
+			ContainerID: containerID,
+		},
+		DelegatePath: delegatePath,
+	}
+
+	expected := []string{"run", "--delegate_path", delegatePath, "--keep", containerID}
 	eq(t, mustConvert(t, cmd), expected)
 }

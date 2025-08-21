@@ -194,7 +194,10 @@ func walkStruct(v reflect.Value, visit func(sf reflect.StructField, fv reflect.V
 			continue
 		}
 		fv := v.Field(i)
-		// recurse into anonymous embedded structs
+
+		// recurse into anonymous embedded structs or fields tagged with
+		// runc_embed, which allows treating a named field as if it were
+		// anonymously embedded.
 		if sf.Anonymous {
 			switch fv.Kind() {
 			case reflect.Struct:
@@ -210,6 +213,22 @@ func walkStruct(v reflect.Value, visit func(sf reflect.StructField, fv reflect.V
 				continue
 			}
 		}
+
+		if _, ok := sf.Tag.Lookup("runc_embed"); ok {
+			switch fv.Kind() {
+			case reflect.Struct:
+				walkStruct(fv, visit)
+			case reflect.Pointer:
+				if fv.IsNil() {
+					zero := reflect.New(fv.Type().Elem()).Elem()
+					walkStruct(zero, visit)
+				} else if fv.Elem().Kind() == reflect.Struct {
+					walkStruct(fv, visit)
+				}
+			}
+			continue
+		}
+
 		visit(sf, fv)
 	}
 }
