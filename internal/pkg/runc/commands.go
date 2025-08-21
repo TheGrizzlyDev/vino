@@ -21,9 +21,9 @@ type PidFileOpt struct {
 
 // PivotKeyringFDsOpt groups common runtime toggles.
 type PivotKeyringFDsOpt struct {
-	NoPivot      bool `runc_flag:"--no-pivot" runc_group:"runtime"`
-	NoNewKeyring bool `runc_flag:"--no-new-keyring" runc_group:"runtime"`
-	PreserveFDs  uint `runc_flag:"--preserve-fds" runc_group:"runtime"`
+	NoPivot      bool  `runc_flag:"--no-pivot" runc_group:"runtime"`
+	NoNewKeyring bool  `runc_flag:"--no-new-keyring" runc_group:"runtime"`
+	PreserveFDs  *uint `runc_flag:"--preserve-fds" runc_group:"runtime"`
 }
 
 // DetachOpt for detach-capable commands (run/restore/exec).
@@ -59,6 +59,7 @@ func (g Global) Groups() []string { return []string{"global"} }
 // ------------------------------------------------------------
 
 type Checkpoint struct {
+	Global
 	// flags
 	ImagePath           string `runc_flag:"--image-path"         runc_group:"images"`
 	WorkPath            string `runc_flag:"--work-path"          runc_group:"images"`
@@ -70,7 +71,7 @@ type Checkpoint struct {
 	ExternalUnixSockets bool   `runc_flag:"--ext-unix-sk"        runc_group:"criu"`
 	ShellJob            bool   `runc_flag:"--shell-job"          runc_group:"criu"`
 	LazyPages           bool   `runc_flag:"--lazy-pages"         runc_group:"criu"`
-	StatusFD            uint   `runc_flag:"--status-fd"          runc_group:"criu"`
+	StatusFD            *uint  `runc_flag:"--status-fd"          runc_group:"criu"`
 	PageServer          string `runc_flag:"--page-server"        runc_group:"criu"` // "IP:port"
 	FileLocks           bool   `runc_flag:"--file-locks"         runc_group:"criu"`
 	PreDump             bool   `runc_flag:"--pre-dump"           runc_group:"criu"`
@@ -93,6 +94,7 @@ func (c Checkpoint) Groups() []string {
 // ------------------------------------------------------------
 
 type Restore struct {
+	Global
 	BundleOpt
 	ConsoleSocketOpt
 	PivotKeyringFDsOpt
@@ -129,6 +131,7 @@ func (r Restore) Groups() []string {
 // ------------------------------------------------------------
 
 type Create struct {
+	Global
 	BundleOpt
 	ConsoleSocketOpt
 	PivotKeyringFDsOpt
@@ -149,6 +152,7 @@ func (c Create) Groups() []string {
 // ------------------------------------------------------------
 
 type Run struct {
+	Global
 	BundleOpt
 	ConsoleSocketOpt
 	PivotKeyringFDsOpt
@@ -171,6 +175,7 @@ func (r Run) Groups() []string {
 // ------------------------------------------------------------
 
 type Start struct {
+	Global
 	ContainerID string `runc_argument:"container_id"`
 }
 
@@ -183,6 +188,7 @@ func (s Start) Groups() []string   { return []string{"global", "container_id"} }
 // ------------------------------------------------------------
 
 type Delete struct {
+	Global
 	Force       bool   `runc_flag:"--force" runc_flag_alternatives:"-f" runc_group:"common"`
 	ContainerID string `runc_argument:"container_id"`
 }
@@ -196,6 +202,7 @@ func (d Delete) Groups() []string   { return []string{"global", "common", "conta
 // ------------------------------------------------------------
 
 type Pause struct {
+	Global
 	ContainerID string `runc_argument:"container_id"`
 }
 
@@ -208,6 +215,7 @@ func (p Pause) Groups() []string   { return []string{"global", "container_id"} }
 // ------------------------------------------------------------
 
 type Resume struct {
+	Global
 	ContainerID string `runc_argument:"container_id"`
 }
 
@@ -220,6 +228,7 @@ func (r Resume) Groups() []string   { return []string{"global", "container_id"} 
 // ------------------------------------------------------------
 
 type Kill struct {
+	Global
 	All         bool   `runc_flag:"--all" runc_group:"common"`
 	ContainerID string `runc_argument:"container_id"`
 	Signal      string `runc_argument:"signal"` // optional; defaults to SIGTERM if empty
@@ -234,6 +243,7 @@ func (k Kill) Groups() []string   { return []string{"global", "common", "contain
 // ------------------------------------------------------------
 
 type List struct {
+	Global
 	FormatOpt
 	Quiet bool `runc_flag:"--quiet" runc_flag_alternatives:"-q" runc_group:"output"`
 }
@@ -247,6 +257,7 @@ func (l List) Groups() []string   { return []string{"global", "output"} }
 // ------------------------------------------------------------
 
 type Ps struct {
+	Global
 	FormatOpt
 
 	ContainerID string   `runc_argument:"container_id"`
@@ -262,6 +273,7 @@ func (p Ps) Groups() []string   { return []string{"global", "output", "container
 // ------------------------------------------------------------
 
 type State struct {
+	Global
 	ContainerID string `runc_argument:"container_id"`
 }
 
@@ -274,6 +286,7 @@ func (s State) Groups() []string   { return []string{"global", "container_id"} }
 // ------------------------------------------------------------
 
 type Events struct {
+	Global
 	Interval    string `runc_flag:"--interval" runc_group:"events"` // e.g. "5s"
 	Stats       bool   `runc_flag:"--stats"    runc_group:"events"`
 	ContainerID string `runc_argument:"container_id"`
@@ -288,6 +301,7 @@ func (e Events) Groups() []string   { return []string{"global", "events", "conta
 // ------------------------------------------------------------
 
 type Exec struct {
+	Global
 	ConsoleSocketOpt
 	DetachOpt
 	PidFileOpt
@@ -325,6 +339,7 @@ func (e Exec) Groups() []string {
 // ------------------------------------------------------------
 
 type Spec struct {
+	Global
 	BundleOpt
 	Rootless bool `runc_flag:"--rootless" runc_group:"spec"`
 }
@@ -338,6 +353,7 @@ func (s Spec) Groups() []string   { return []string{"global", "bundle", "spec"} 
 // ------------------------------------------------------------
 
 type Update struct {
+	Global
 	// args
 	ContainerID string `runc_argument:"container_id"`
 
@@ -362,3 +378,15 @@ func (u Update) Subcommand() string { return "update" }
 func (u Update) Groups() []string {
 	return []string{"global", "container_id", "mode", "cpu", "memory", "pids", "io"}
 }
+
+// ------------------------------------------------------------
+// features
+// Manpage: not available
+// ------------------------------------------------------------
+
+type Features struct {
+	Global
+}
+
+func (f Features) Subcommand() string { return "features" }
+func (f Features) Groups() []string   { return []string{"global"} }

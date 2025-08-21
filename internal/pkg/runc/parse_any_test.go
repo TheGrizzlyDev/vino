@@ -133,3 +133,29 @@ func TestParseAny_RuncEmbedEquals(t *testing.T) {
 		t.Fatalf("ContainerID got %q", u.Run.Command.ContainerID)
 	}
 }
+
+func TestParseAny_SubcommandAfterFlags(t *testing.T) {
+	t.Parallel()
+
+	type union struct {
+		Run *wrapperCmd[Run]
+	}
+
+	var u union
+	args := []string{"--delegate_path", "/tmp/d", "run", "--keep", "cid"}
+	if err := ParseAny(&u, args); err != nil {
+		t.Fatalf("ParseAny: %v", err)
+	}
+	if u.Run == nil {
+		t.Fatalf("Run command not populated")
+	}
+	if u.Run.DelegatePath != "/tmp/d" {
+		t.Fatalf("DelegatePath got %q", u.Run.DelegatePath)
+	}
+	if !u.Run.Command.Keep {
+		t.Fatalf("Keep flag not set")
+	}
+	if u.Run.Command.ContainerID != "cid" {
+		t.Fatalf("ContainerID got %q", u.Run.Command.ContainerID)
+	}
+}

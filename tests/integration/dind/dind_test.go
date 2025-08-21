@@ -15,6 +15,21 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
+func logDelegatecLogs(t *testing.T, ctx context.Context, cont tc.Container) {
+	t.Helper()
+	code, reader, err := cont.Exec(ctx, []string{"cat", "/var/log/delegatec.log"})
+	if err != nil {
+		t.Logf("failed to read delegatec.log: %v", err)
+		return
+	}
+	if code != 0 {
+		t.Logf("failed to read delegatec.log: exit code %d", code)
+		return
+	}
+	out, _ := io.ReadAll(reader)
+	t.Logf("--- delegatec.log ---\n%s\n--------------------", string(out))
+}
+
 func TestRuntimeParity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -84,6 +99,9 @@ func TestRuntimeParity(t *testing.T) {
 
 		// comparison
 		if runcCode != delegatecCode || string(runcOut) != string(delegatecOut) {
+			if delegatecCode != 0 {
+				logDelegatecLogs(t, ctx, cont)
+			}
 			t.Fatalf("mismatch for %q: runc [%d] %q vs %s [%d] %q", cmd, runcCode, string(runcOut), runtime, delegatecCode, string(delegatecOut))
 		}
 		t.Logf("--- case PASSED: %q ---", cmd)

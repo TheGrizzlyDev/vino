@@ -15,20 +15,48 @@ func ParseAny[T any](cmdUnion *T, args []string) error {
 		return fmt.Errorf("Parse: missing subcommand")
 	}
 
+	// Get all possible subcommands
+	subcommands := make(map[string]struct{})
 	v := reflect.ValueOf(cmdUnion).Elem()
+	for i := range v.NumField() {
+		field := v.Field(i)
+		cmdReflect := reflect.New(field.Type().Elem())
+		subcommandCall := cmdReflect.MethodByName("Subcommand").Call([]reflect.Value{})
+		subcommands[subcommandCall[0].String()] = struct{}{}
+	}
+
+	var subcommand string
+	var subcommandIdx = -1
+	for i, arg := range args {
+		if _, ok := subcommands[arg]; ok {
+			subcommand = arg
+			subcommandIdx = i
+			break
+		}
+	}
+
+	if subcommand == "" {
+		return fmt.Errorf("Parse: no valid subcommand found")
+	}
 
 	for i := range v.NumField() {
 		field := v.Field(i)
 		cmdReflect := reflect.New(field.Type().Elem())
 		subcommandCall := cmdReflect.MethodByName("Subcommand").Call([]reflect.Value{})
-		if args[0] != subcommandCall[0].String() {
+		if subcommand != subcommandCall[0].String() {
 			continue
 		}
 		cmd, ok := cmdReflect.Interface().(Command)
 		if !ok {
 			return fmt.Errorf("field type '%s' does not implement Command", field.Type().Name())
 		}
-		if err := Parse(cmd, args[1:]); err != nil {
+
+		// We need to remove the subcommand from the args list before passing to Parse.
+		argsWithoutSubcommand := make([]string, 0, len(args)-1)
+		argsWithoutSubcommand = append(argsWithoutSubcommand, args[:subcommandIdx]...)
+		argsWithoutSubcommand = append(argsWithoutSubcommand, args[subcommandIdx+1:]...)
+
+		if err := Parse(cmd, argsWithoutSubcommand); err != nil {
 			return err
 		}
 
@@ -269,12 +297,18 @@ func setValue(v reflect.Value, val string) error {
 		if err != nil {
 			return err
 		}
+		if v.OverflowInt(n) {
+			return fmt.Errorf("value %q overflows field of type %s", val, v.Type())
+		}
 		v.SetInt(n)
 		return nil
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		n, err := strconv.ParseUint(val, 10, 64)
 		if err != nil {
 			return err
+		}
+		if v.OverflowUint(n) {
+			return fmt.Errorf("value %q overflows field of type %s", val, v.Type())
 		}
 		v.SetUint(n)
 		return nil

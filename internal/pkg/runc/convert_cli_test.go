@@ -53,7 +53,10 @@ func eq(t *testing.T, got, want []string) {
 	}
 }
 
+func uintp(v uint) *uint { return &v }
+
 /* ------------------------------- happy paths -------------------------------- */
+
 
 func TestConvertToCmdline_Exec_Comprehensive(t *testing.T) {
 	t.Parallel()
@@ -65,7 +68,7 @@ func TestConvertToCmdline_Exec_Comprehensive(t *testing.T) {
 		PivotKeyringFDsOpt: PivotKeyringFDsOpt{
 			NoPivot:      true,
 			NoNewKeyring: true,
-			PreserveFDs:  3,
+			PreserveFDs:  uintp(3),
 		},
 		Cwd:            workDir,
 		Env:            envVars,
@@ -176,7 +179,7 @@ func TestConvertToCmdline_Checkpoint_NumericAndSkipZero(t *testing.T) {
 	imagePath := "/images/cp"
 	cmd := Checkpoint{
 		ImagePath:   imagePath,
-		StatusFD:    10,
+		StatusFD:    uintp(10),
 		ContainerID: "X",
 	}
 	expected := []string{
@@ -206,7 +209,7 @@ func TestConvertToCmdline_EmbeddedOrder_Run(t *testing.T) {
 		ConsoleSocketOpt: ConsoleSocketOpt{ConsoleSocket: "/s"},
 		PivotKeyringFDsOpt: PivotKeyringFDsOpt{
 			NoPivot:     true,
-			PreserveFDs: 2,
+			PreserveFDs: uintp(2),
 		},
 		NoSubreaper: true,
 		Keep:        true,

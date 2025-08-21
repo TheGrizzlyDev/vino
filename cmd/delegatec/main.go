@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"reflect"
@@ -40,12 +41,24 @@ type Commands struct {
 	Exec       *DelegatecCmd[runc.Exec]
 	Spec       *DelegatecCmd[runc.Spec]
 	Update     *DelegatecCmd[runc.Update]
+	Features   *DelegatecCmd[runc.Features]
 }
 
 func main() {
+	f, err := os.OpenFile("/var/log/delegatec.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("error opening file: %v", err)
+	}
+	defer f.Close()
+	log.SetOutput(f)
+
+	log.Printf("delegatec called with args: %v\n", os.Args)
+	log.Printf("delegatec environment: %v\n", os.Environ())
+
 	cmds := Commands{}
 	if err := runc.ParseAny(&cmds, os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		log.Printf("failed to parse args: %v\nenv: %v", err, os.Environ())
+		fmt.Fprintf(os.Stderr, "failed to parse args: %v\nenv: %v", err, os.Environ())
 		os.Exit(1)
 	}
 
@@ -66,6 +79,9 @@ func main() {
 		break
 	}
 
+	log.Printf("delegatec parsed command: %#v\n", cmd)
+	log.Printf("delegatec delegate path: %s\n", delegatePath)
+
 	if cmd == nil {
 		fmt.Fprintln(os.Stderr, "no command specified")
 		os.Exit(1)
@@ -73,15 +89,19 @@ func main() {
 
 	cli, err := runc.NewDelegatingCliClient(delegatePath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		log.Printf("failed to create delegating client: %v\nenv: %v", err, os.Environ())
+		fmt.Fprintf(os.Stderr, "failed to create delegating client: %v\nenv: %v", err, os.Environ())
 		os.Exit(1)
 	}
 
 	execCmd, err := cli.Command(context.Background(), cmd)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		log.Printf("failed to create command: %v\nenv: %v", err, os.Environ())
+		fmt.Fprintf(os.Stderr, "failed to create command: %v\nenv: %v", err, os.Environ())
 		os.Exit(1)
 	}
+
+	log.Printf("executing command: %s %v\n", execCmd.Path, execCmd.Args)
 
 	execCmd.Stdin = os.Stdin
 	execCmd.Stdout = os.Stdout
@@ -91,7 +111,8 @@ func main() {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}
-		fmt.Fprintln(os.Stderr, err)
+		log.Printf("command execution failed: %v\nenv: %v", err, os.Environ())
+		fmt.Fprintf(os.Stderr, "command execution failed: %v\nenv: %v", err, os.Environ())
 		os.Exit(1)
 	}
 
