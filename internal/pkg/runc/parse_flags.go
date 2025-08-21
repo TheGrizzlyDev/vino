@@ -7,6 +7,39 @@ import (
 	"strings"
 )
 
+func ParseAny[T any](cmdUnion *T, args []string) error {
+	if cmdUnion == nil {
+		return fmt.Errorf("Parse: nil cmdUnion")
+	}
+
+	v := reflect.ValueOf(cmdUnion).Elem()
+
+	for i := range v.NumField() {
+		field := v.Field(i)
+		cmdReflect := reflect.New(field.Type().Elem())
+		subcommandCall := cmdReflect.MethodByName("Subcommand").Call([]reflect.Value{})
+		if args[0] != subcommandCall[0].String() {
+			continue
+		}
+		cmd, ok := cmdReflect.Interface().(Command)
+		if !ok {
+			return fmt.Errorf("field type '%s' does not implement Command", field.Type().Name())
+		}
+		if err := Parse(&cmd, args[1:]); err != nil {
+			return err
+		}
+
+		if !field.CanSet() {
+			return fmt.Errorf("field %d not settable", i)
+		}
+
+		field.Set(cmdReflect)
+		return nil
+	}
+
+	return fmt.Errorf("Parse: no valid subcommand found")
+}
+
 // Parse reads args into cmd according to struct tags.
 // Flags from groups within the same contiguous segment may appear in any order.
 // The ordering is only enforced between argument groups, literal "--" markers,
