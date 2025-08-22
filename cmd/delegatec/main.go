@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -103,11 +104,17 @@ func main() {
 
 	log.Printf("executing command: %s %v\n", execCmd.Path, execCmd.Args)
 
-	execCmd.Stdin = os.Stdin
-	execCmd.Stdout = os.Stdout
-	execCmd.Stderr = os.Stderr
+	var stdoutBuf, stderrBuf bytes.Buffer
+	execCmd.Stdout = &stdoutBuf
+	execCmd.Stderr = &stderrBuf
 
 	if err := execCmd.Run(); err != nil {
+		log.Printf("runc stdout: %s\n", stdoutBuf.String())
+		log.Printf("runc stderr: %s\n", stderrBuf.String())
+
+		os.Stdout.Write(stdoutBuf.Bytes())
+		os.Stderr.Write(stderrBuf.Bytes())
+
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}
@@ -115,6 +122,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "command execution failed: %v\nenv: %v", err, os.Environ())
 		os.Exit(1)
 	}
+
+	os.Stdout.Write(stdoutBuf.Bytes())
+	os.Stderr.Write(stderrBuf.Bytes())
 
 	if execCmd.ProcessState != nil {
 		os.Exit(execCmd.ProcessState.ExitCode())
