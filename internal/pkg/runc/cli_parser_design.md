@@ -29,10 +29,14 @@ This approach was chosen for several key reasons:
 
 #### `Slot` Interface
 
-A marker interface that all parsing elements implement.
+A marker interface that all parsing elements implement. It uses an
+unexported `slot()` method so that only types within this package can
+implement it, effectively sealing the interface.
 
 ```go
-type Slot interface{}
+type Slot interface {
+    slot()
+}
 ```
 
 #### Concrete `Slot` Types
@@ -43,6 +47,8 @@ type Slot interface{}
     type FlagGroup struct {
         Name string // The name of the flag group (e.g., "global", "exec_flags")
     }
+
+    func (FlagGroup) slot() {}
     ```
 
 2.  **`Argument`**: Represents a single, strictly ordered positional argument.
@@ -51,6 +57,8 @@ type Slot interface{}
     type Argument struct {
         Name string // The name of the argument (e.g., "container_id")
     }
+
+    func (Argument) slot() {}
     ```
 
 3.  **`Arguments`**: Represents a variadic list of positional arguments. It consumes all remaining tokens until a `Literal{Value: "--"}` or the end of the command line. This is useful for collecting arguments to be passed to an external process.
@@ -59,6 +67,8 @@ type Slot interface{}
     type Arguments struct {
         Name string // The name of the variadic argument (e.g., "command_args")
     }
+
+    func (Arguments) slot() {}
     ```
 
 4.  **`Literal`**: Represents a specific string that must appear at its exact position in the argument sequence. This is primarily used for the `--` separator.
@@ -67,6 +77,8 @@ type Slot interface{}
     type Literal struct {
         Value string // The literal string, e.g., "--"
     }
+
+    func (Literal) slot() {}
     ```
 
 5.  **`Subcommand`**: Represents the literal string that identifies this command. It must be the first `Ordered` slot in the command's `Slots()` definition. `ParseAny` will use this to identify the correct command parser.
@@ -75,6 +87,8 @@ type Slot interface{}
     type Subcommand struct {
         Value string // The literal string, e.g., "add", "remove", "run_command"
     }
+
+    func (Subcommand) slot() {}
     ```
 
 6.  **`Group`**: Defines a segment of command-line arguments where flags and positional arguments can be mixed.
@@ -87,6 +101,8 @@ type Slot interface{}
         Unordered []Slot // Contains FlagGroup slots
         Ordered   []Slot // Contains Argument, Arguments, Literal, and Subcommand slots in strict sequence
     }
+
+    func (Group) slot() {}
     ```
 
 #### `Command` Interface
