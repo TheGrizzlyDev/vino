@@ -61,7 +61,7 @@ type Slot interface {
     func (Argument) slot() {}
     ```
 
-3.  **`Arguments`**: Represents a variadic list of positional arguments. It consumes all remaining tokens until a `Literal{Value: "--"}` or the end of the command line. This is useful for collecting arguments to be passed to an external process.
+3.  **`Arguments`**: Represents a variadic list of positional arguments. It consumes all remaining tokens until a `Literal{Value: "--"}` or the end of the command line. When a `Literal` follows an `Arguments` slot, any token matching that literal's value belongs to the `Literal` and is not collected by `Arguments`. This is useful for collecting arguments to be passed to an external process.
 
     ```go
     type Arguments struct {
@@ -81,7 +81,7 @@ type Slot interface {
     func (Literal) slot() {}
     ```
 
-5.  **`Subcommand`**: Represents the literal string that identifies this command. It must be the first `Ordered` slot in the command's `Slots()` definition. `ParseAny` will use this to identify the correct command parser.
+5.  **`Subcommand`**: Represents the literal string that identifies this command. It must be the first `Ordered` slot in the command's `Slots()` definition so that `Parse` can quickly determine whether the input matches the command.
 
     ```go
     type Subcommand struct {
@@ -120,18 +120,18 @@ type Command interface {
 The parsing process is orchestrated by two main functions: `ParseAny` and `Parse`.
 
 1.  **`ParseAny` Function:**
-    *   **Role:** Identifies the specific command being invoked based on its `Subcommand` slot and dispatches to the correct command parser.
+    *   **Role:** Tries to parse the input against each known command and selects the first successful match.
     *   **Process:**
-        *   It iterates through the command-line arguments (`args`) to find the *first non-flag argument*. This argument is the candidate for the command's name.
-        *   It then iterates through a pre-defined registry of all known `Command` implementations (e.g., provided via a slice of command prototypes).
-        *   For each `Command` prototype, `ParseAny` inspects its `Slots()` definition. It specifically looks for a `Subcommand` slot as the *first* element in the `Ordered` list of the command's initial `Group` (or as a top-level `Subcommand` slot if the command starts with one) that matches the identified command name candidate.
-        *   Once a match is found, `ParseAny` instantiates the corresponding concrete `Command` struct (using reflection) and passes the *entire original `args` slice* (including the program name and any global flags that might precede the command name) to the generic `Parse` function.
-        *   It then sets the populated `Command` struct into the appropriate field of the `cmdUnion` (also using reflection).
-        *   If no matching `Subcommand` slot is found after checking all prototypes, `ParseAny` can provide a helpful error message, perhaps listing available commands.
+        *   `ParseAny` iterates through a registry of `Command` prototypes.
+        *   For each prototype it instantiates a concrete struct and calls `Parse` with the full `args` slice.
+        *   `Parse` returns `(matched bool, err error)`. If `matched` is `false`, `ParseAny` moves to the next prototype.
+        *   If `matched` is `true` and `err` is `nil`, `ParseAny` sets the populated command into the `cmdUnion` and returns successfully.
+        *   If `matched` is `true` and `err` is non-nil`, the input belongs to that command but was malformed; `ParseAny` returns the error immediately.
+        *   If no command reports a match, `ParseAny` returns an error indicating that the subcommand was not recognized.
 
 2.  **`Parse` Function:**
-    *   **Role:** Parses the arguments for a specific `Command` instance based on its `Slots()` definition.
-    *   **Inputs:** Takes a `Command` instance (which is a pointer to the concrete command struct, e.g., `*AddCommand`) and the full `args` slice (as received by `ParseAny`).
+    *   **Role:** Attempts to parse the input according to a command's `Slots()` definition and reports whether the input matches.
+    *   **Inputs:** Takes a `Command` instance (which is a pointer to the concrete command struct, e.g., `*AddCommand`) and the full `args` slice (as received by `ParseAny`). It returns `(bool, error)`, where the boolean indicates whether the arguments matched the command's shape.
     *   **Helper Functions:** Relies on several helper functions for reflection and argument manipulation:
         *   `walkStruct(v reflect.Value, fn func(sf reflect.StructField, fv reflect.Value))`: Recursively traverses a struct's fields, applying a function to each field. Used to collect `fieldInfo`.
         *   `flagTakesValue(v reflect.Value) bool`: Determines if a flag's corresponding field type expects a value (e.g., `string`, `int`) or is a boolean flag.
@@ -148,12 +148,13 @@ The parsing process is orchestrated by two main functions: `ParseAny` and `Parse
                 *   If `currentArg` is not a flag (or `stopFlagParsing` is `true`), it must match the next expected `Ordered` slot (`Subcommand`, `Literal`, `Argument`, or `Arguments`). If it's not, or if the `Ordered` slots are exhausted, it's an error.
                 *   `Subcommand` and `Literal` slots are strictly matched.
                 *   `Argument` slots consume the next single argument.
-                *   `Arguments` slots consume all remaining arguments for that segment.
+                *   `Arguments` slots consume all remaining arguments for that segment until a following `Literal` slot's value is encountered.
             *   **When processing a top-level `Literal` slot (e.g., `Literal{Value: "--"}`):**
                 *   It strictly expects that literal value at the current position in the `args` slice. If it's not present, parsing fails.
                 *   If the `Literal` is `"--"`, `stopFlagParsing` is set to `true`, ensuring no more flags are parsed for subsequent arguments.
             *   **When processing a top-level `Arguments` slot:**
-                *   It consumes all remaining arguments in the `args` slice, effectively acting as a "catch-all" for trailing arguments.
+                *   It consumes all remaining arguments in the `args` slice, stopping early if the next slot is a `Literal` whose value is encountered. This slot acts as a "catch-all" for trailing arguments.
         *   Finally, it checks for any unexpected trailing arguments that were not consumed by any slot.
+        *   If all slots are satisfied and no extraneous arguments remain, `Parse` returns `(true, nil)`. If a slot fails to match after a preliminary match (e.g., wrong flag value), it returns `(true, err)`. If the overall shape does not match the command (e.g., different subcommand name), it returns `(false, nil)`.
 
 This structured approach provides a powerful and explicit way to define complex CLI parsing rules, enhancing readability, maintainability, and composability.
