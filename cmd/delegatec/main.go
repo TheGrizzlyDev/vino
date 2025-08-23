@@ -9,7 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"sort"
+	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/TheGrizzlyDev/vino/internal/pkg/runc"
@@ -145,8 +148,7 @@ type Commands struct {
 
 func requiresStdin(cmd runc.Command) bool {
 	switch cmd.(type) {
-	case runc.Create, *runc.Create,
-		runc.Run, *runc.Run,
+	case runc.Run, *runc.Run,
 		runc.Exec, *runc.Exec,
 		runc.Restore, *runc.Restore,
 		runc.Update, *runc.Update:
@@ -154,6 +156,33 @@ func requiresStdin(cmd runc.Command) bool {
 	default:
 		return false
 	}
+}
+
+func inheritedFDs() ([]*os.File, error) {
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return nil, err
+	}
+
+	var fds []int
+	for _, e := range entries {
+		fd, err := strconv.Atoi(e.Name())
+		if err != nil || fd < 3 {
+			continue
+		}
+		fds = append(fds, fd)
+	}
+	sort.Ints(fds)
+
+	files := make([]*os.File, 0, len(fds))
+	for _, fd := range fds {
+		dup, err := syscall.Dup(fd)
+		if err != nil {
+			return nil, fmt.Errorf("dup fd %d: %w", fd, err)
+		}
+		files = append(files, os.NewFile(uintptr(dup), fmt.Sprintf("fd-%d", fd)))
+	}
+	return files, nil
 }
 
 func main() {
@@ -223,6 +252,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	fds, err := inheritedFDs()
+	if err != nil {
+		log.Printf("failed to collect inherited fds: %v", err)
+	} else if len(fds) > 0 {
+		execCmd.ExtraFiles = append(execCmd.ExtraFiles, fds...)
+	}
+
 	log.Printf("executing command: %s %v\n", execCmd.Path, execCmd.Args)
 
 	stdout := NewLogWriter()
@@ -241,7 +277,18 @@ func main() {
 		}()
 	}
 
-	if err := execCmd.Run(); err != nil {
+	if err := execCmd.Start(); err != nil {
+		os.Stdout.Write(stdout.Bytes())
+		os.Stderr.Write(stderr.Bytes())
+
+		log.Printf("command start failed: %v\nenv: %v", err, os.Environ())
+		fmt.Fprintf(os.Stderr, "command start failed: %v\nenv: %v", err, os.Environ())
+		os.Exit(1)
+	}
+	for _, f := range fds {
+		f.Close()
+	}
+	if err := execCmd.Wait(); err != nil {
 		os.Stdout.Write(stdout.Bytes())
 		os.Stderr.Write(stderr.Bytes())
 

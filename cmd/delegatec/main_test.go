@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -18,7 +19,7 @@ func TestRequiresStdin(t *testing.T) {
 		cmd  runc.Command
 		want bool
 	}{
-		{"Create", runc.Create{}, true},
+		{"Create", runc.Create{}, false},
 		{"Run", runc.Run{}, true},
 		{"Exec", runc.Exec{}, true},
 		{"Restore", runc.Restore{}, true},
@@ -75,5 +76,34 @@ func TestStdinLoggedAndForwarded(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), "test-input") {
 		t.Fatalf("log does not contain input, got %q", logBuf.String())
+	}
+}
+
+func TestInheritedFDs(t *testing.T) {
+	r1, w1, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe1: %v", err)
+	}
+	defer r1.Close()
+	defer w1.Close()
+
+	files, err := inheritedFDs()
+	if err != nil {
+		t.Fatalf("inheritedFDs: %v", err)
+	}
+	want := map[string]bool{
+		fmt.Sprintf("fd-%d", r1.Fd()): false,
+		fmt.Sprintf("fd-%d", w1.Fd()): false,
+	}
+	for _, f := range files {
+		if _, ok := want[f.Name()]; ok {
+			want[f.Name()] = true
+		}
+		f.Close()
+	}
+	for name, seen := range want {
+		if !seen {
+			t.Fatalf("missing forwarded fd %s", name)
+		}
 	}
 }
