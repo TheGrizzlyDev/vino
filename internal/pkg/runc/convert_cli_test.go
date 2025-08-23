@@ -57,7 +57,6 @@ func uintp(v uint) *uint { return &v }
 
 /* ------------------------------- happy paths -------------------------------- */
 
-
 func TestConvertToCmdline_Exec_Comprehensive(t *testing.T) {
 	t.Parallel()
 
@@ -232,68 +231,69 @@ func TestConvertToCmdline_EmbeddedOrder_Run(t *testing.T) {
 
 // BadMissingGroupFlag: runc_flag present without runc_group.
 type BadMissingGroupFlag struct {
-	Oops bool `runc_flag:"--oops"`
+    Oops bool `runc_flag:"--oops"`
 }
 
-func (BadMissingGroupFlag) Subcommand() string { return "bad-missing-group" }
-func (BadMissingGroupFlag) Groups() []string   { return []string{"global", "common"} }
+func (BadMissingGroupFlag) Slots() Slot {
+    return Group{Ordered: []Slot{Subcommand{Value: "bad-missing-group"}}}
+}
 
 // BadArgHasGroup: argument incorrectly sets runc_group.
 type BadArgHasGroup struct {
-	Thing string `runc_argument:"arg" runc_group:"nope"`
+    Thing string `runc_argument:"arg" runc_group:"nope"`
 }
 
-func (BadArgHasGroup) Subcommand() string { return "bad-arg-has-group" }
-func (BadArgHasGroup) Groups() []string   { return []string{"arg"} }
+func (BadArgHasGroup) Slots() Slot {
+    return Group{Ordered: []Slot{Subcommand{Value: "bad-arg-has-group"}, Argument{Name: "arg"}}}
+}
 
-// BadGroupNotInGroupsList: flag references a group not listed in Groups().
+// BadGroupNotInGroupsList: flag references a group not listed in Slots().
 type BadGroupNotInGroupsList struct {
-	Flag string `runc_flag:"--flag" runc_group:"missing"`
+    Flag string `runc_flag:"--flag" runc_group:"missing"`
 }
 
-func (BadGroupNotInGroupsList) Subcommand() string { return "bad-missing-in-list" }
-func (BadGroupNotInGroupsList) Groups() []string   { return []string{"global"} }
+func (BadGroupNotInGroupsList) Slots() Slot {
+    return Group{Ordered: []Slot{Subcommand{Value: "bad-missing-in-list"}}, Unordered: []Slot{FlagGroup{Name: "global"}}}
+}
 
 // BadBothFlagAndArg: field illegally has both tags.
 type BadBothFlagAndArg struct {
-	Field string `runc_flag:"--flag" runc_group:"x" runc_argument:"arg"`
+    Field string `runc_flag:"--flag" runc_group:"x" runc_argument:"arg"`
 }
 
-func (BadBothFlagAndArg) Subcommand() string { return "bad-both" }
-func (BadBothFlagAndArg) Groups() []string   { return []string{"x", "arg"} }
-
-// BadMultipleSeparatorsGroup: Groups() contains "--" twice.
-type BadMultipleSeparatorsGroup struct {
-	A string `runc_flag:"--a" runc_group:"x"`
+func (BadBothFlagAndArg) Slots() Slot {
+    return Group{
+        Unordered: []Slot{FlagGroup{Name: "x"}},
+        Ordered:   []Slot{Subcommand{Value: "bad-both"}, Argument{Name: "arg"}},
+    }
 }
 
-func (BadMultipleSeparatorsGroup) Subcommand() string { return "bad-seps" }
-func (BadMultipleSeparatorsGroup) Groups() []string   { return []string{"x", "--", "--"} }
+// BadMultipleSeparatorsGroup: deprecated in Slots model.
+// Removed: Multiple literal separators are allowed; no special-case validation.
 
 // BadAltNoFlag: runc_flag_alternatives present without runc_flag.
 type BadAltNoFlag struct {
-	A bool `runc_flag_alternatives:"-a"`
+    A bool `runc_flag_alternatives:"-a"`
 }
 
-func (BadAltNoFlag) Subcommand() string { return "bad-alt-no-flag" }
-func (BadAltNoFlag) Groups() []string   { return []string{"g"} }
+func (BadAltNoFlag) Slots() Slot { return Group{Ordered: []Slot{Subcommand{Value: "bad-alt-no-flag"}}, Unordered: []Slot{FlagGroup{Name: "g"}}} }
 
 // BadAltInvalid: runc_flag_alternatives contains invalid flag.
 type BadAltInvalid struct {
-	Flag bool `runc_flag:"--flag" runc_flag_alternatives:"oops" runc_group:"g"`
+    Flag bool `runc_flag:"--flag" runc_flag_alternatives:"oops" runc_group:"g"`
 }
 
-func (BadAltInvalid) Subcommand() string { return "bad-alt-invalid" }
-func (BadAltInvalid) Groups() []string   { return []string{"g"} }
+func (BadAltInvalid) Slots() Slot { return Group{Ordered: []Slot{Subcommand{Value: "bad-alt-invalid"}}, Unordered: []Slot{FlagGroup{Name: "g"}}} }
 
 // SliceFlagsAndArgsStruct: simple type to check repeated emission.
 type SliceFlagsAndArgsStruct struct {
-	Fs []string `runc_flag:"--fs" runc_group:"g"`
-	Is []int    `runc_argument:"a"`
+    Fs []string `runc_flag:"--fs" runc_group:"g"`
+    Is []int    `runc_argument:"a"`
 }
 
-func (SliceFlagsAndArgsStruct) Subcommand() string { return "slices" }
-func (SliceFlagsAndArgsStruct) Groups() []string   { return []string{"g", "a"} }
+func (SliceFlagsAndArgsStruct) Slots() Slot {
+    return Group{Unordered: []Slot{FlagGroup{Name: "g"}}, Ordered: []Slot{Subcommand{Value: "slices"}, Argument{Name: "a"}}}
+}
 
 /* ------------------------------ negative tests ------------------------------ */
 
@@ -318,10 +318,10 @@ func TestConvertToCmdline_Fails_ArgHasGroup(t *testing.T) {
 func TestConvertToCmdline_Fails_GroupNotInGroupsList(t *testing.T) {
 	t.Parallel()
 
-	_, err := convertToCmdline(BadGroupNotInGroupsList{})
-	if err == nil || !strings.Contains(err.Error(), "not present in Groups()") {
-		t.Fatalf("expected group-not-in-Groups error, got: %v", err)
-	}
+    _, err := convertToCmdline(BadGroupNotInGroupsList{})
+    if err == nil || !strings.Contains(err.Error(), "not present in Slots()") {
+        t.Fatalf("expected group-not-in-Slots error, got: %v", err)
+    }
 }
 
 func TestConvertToCmdline_Fails_BothFlagAndArg(t *testing.T) {
@@ -333,14 +333,7 @@ func TestConvertToCmdline_Fails_BothFlagAndArg(t *testing.T) {
 	}
 }
 
-func TestConvertToCmdline_Fails_MultipleSeparatorsInGroups(t *testing.T) {
-	t.Parallel()
-
-	_, err := convertToCmdline(BadMultipleSeparatorsGroup{})
-	if err == nil {
-		t.Fatal("expected multiple-separators error, got nothing")
-	}
-}
+// Removed: multiple literal separators are allowed by Slots model.
 
 func TestConvertToCmdline_Fails_AltWithoutFlag(t *testing.T) {
 	t.Parallel()
@@ -374,15 +367,16 @@ func TestConvertToCmdline_SliceFlagsAndArgs(t *testing.T) {
 // delegateWrapper is a helper used to verify that runc_embed expands named
 // fields when generating command lines.
 type delegateWrapper[T Command] struct {
-	Command T `runc_embed:""`
+    Command T `runc_embed:""`
 
-	DelegatePath string `runc_flag:"--delegate_path" runc_group:"delegate"`
+    DelegatePath string `runc_flag:"--delegate_path" runc_group:"delegate"`
 }
 
-func (w delegateWrapper[T]) Subcommand() string { return w.Command.Subcommand() }
-
-func (w delegateWrapper[T]) Groups() []string {
-	return append([]string{"delegate"}, w.Command.Groups()...)
+func (w delegateWrapper[T]) Slots() Slot {
+    return Group{
+        Unordered: []Slot{FlagGroup{Name: "delegate"}},
+        Ordered:   []Slot{w.Command.Slots()},
+    }
 }
 
 // TestConvertToCmdline_RuncEmbed ensures that fields tagged with runc_embed are

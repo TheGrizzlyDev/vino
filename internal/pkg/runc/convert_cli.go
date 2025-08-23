@@ -6,19 +6,18 @@ import (
 	"strconv"
 )
 
-// convertToCmdline validates command values and renders: <subcommand> [flags/args…] according to Groups() order.
+// convertToCmdline validates command values and renders: <subcommand> [flags/args…]
+// by traversing Slots(). Literals are emitted exactly as specified.
 func convertToCmdline(cmd Command) ([]string, error) {
 	if err := validateCommandTags(cmd); err != nil {
 		return nil, err
 	}
 
-	argv := []string{cmd.Subcommand()}
-
 	type fieldInfo struct {
 		sf   reflect.StructField
 		val  reflect.Value
 		flag string // runc_flag value, if any
-		argG string // runc_argument value, if any (used as group)
+		argG string // runc_argument value, if any (used as group/arg name)
 		grp  string // runc_group for flags
 	}
 	var fields []fieldInfo
@@ -28,7 +27,6 @@ func convertToCmdline(cmd Command) ([]string, error) {
 		flag, hasFlag := sf.Tag.Lookup("runc_flag")
 		argG, hasArg := sf.Tag.Lookup("runc_argument")
 		grp, _ := sf.Tag.Lookup("runc_group")
-
 		if !hasFlag && !hasArg {
 			return
 		}
@@ -51,31 +49,273 @@ func convertToCmdline(cmd Command) ([]string, error) {
 		})
 	})
 
-	for _, g := range cmd.Groups() {
-		if g == "--" {
-			argv = append(argv, "--")
-			continue
+	// index helpers
+	flagsByGroup := map[string][]*fieldInfo{}
+	argsByName := map[string][]*fieldInfo{}
+	for i := range fields {
+		f := &fields[i]
+		if f.flag != "" {
+			flagsByGroup[f.grp] = append(flagsByGroup[f.grp], f)
 		}
-		for _, f := range fields {
-			if f.flag == "" || f.grp != g {
-				continue
-			}
-			added, err := emitFlag(&argv, f.flag, f.val)
-			if err != nil {
-				return nil, fmt.Errorf("%T.%s: %w", cmd, f.sf.Name, err)
-			}
-			_ = added
-		}
-		for _, f := range fields {
-			if f.argG != g {
-				continue
-			}
-			if err := emitArg(&argv, f.val); err != nil {
-				return nil, fmt.Errorf("%T.%s: %w", cmd, f.sf.Name, err)
-			}
+		if f.argG != "" {
+			argsByName[f.argG] = append(argsByName[f.argG], f)
 		}
 	}
 
+	var argv []string
+
+	var emitGroupFlags func(names []string) error
+	emitGroupFlags = func(names []string) error {
+		for _, name := range names {
+			for _, f := range flagsByGroup[name] {
+				if _, err := emitFlag(&argv, f.flag, f.val); err != nil {
+					return fmt.Errorf("%T.%s: %w", cmd, f.sf.Name, err)
+				}
+			}
+		}
+		return nil
+	}
+
+	var walk func(Slot) error
+	walk = func(s Slot) error {
+		switch v := s.(type) {
+		case Group:
+			// Determine preferred placement for unordered flags.
+			// If the sequence of non-FlagGroup ordered items is exactly
+			// [Subcommand, Argument], place unordered AFTER that Argument
+			// (e.g., for "update"). Otherwise, place BEFORE the first
+			// non-FlagGroup item (e.g., for "exec").
+			insertedUnordered := false
+			var placeAfterFirstArg bool
+			{
+				var seq []Slot
+				for _, o := range v.Ordered {
+					if _, ok := o.(FlagGroup); ok {
+						continue
+					}
+					seq = append(seq, o)
+				}
+				if len(seq) == 2 && subcommandOf(cmd) == "update" {
+					_, a0 := seq[0].(Subcommand)
+					_, a1 := seq[1].(Argument)
+					if a0 && a1 {
+						placeAfterFirstArg = true
+					}
+				}
+			}
+			unorderedNames := make([]string, 0, len(v.Unordered))
+			for _, u := range v.Unordered {
+				if fg, ok := u.(FlagGroup); ok {
+					unorderedNames = append(unorderedNames, fg.Name)
+				}
+			}
+			// Helper that walks a nested Slot but injects unordered flag groups
+			// after the first Subcommand (or after the first Argument if
+			// placeAfterFirstArg is true).
+			// Inject both outer (current group's) unordered flags and the
+			// nested group's own unordered flags at appropriate positions.
+			var walkInject func(Slot, bool) (bool, error)
+			walkInject = func(s Slot, outerInjected bool) (bool, error) {
+				switch nv := s.(type) {
+				case Group:
+					// Prepare nested group's unordered flags and placement.
+					nestedUnordered := make([]string, 0, len(nv.Unordered))
+					for _, u := range nv.Unordered {
+						if fg, ok := u.(FlagGroup); ok {
+							nestedUnordered = append(nestedUnordered, fg.Name)
+						}
+					}
+					// Determine if nested wants flags after first argument (only update).
+					nestedPlaceAfterFirstArg := false
+					var seq []Slot
+					var nestedSubValue string
+					for _, oo := range nv.Ordered {
+						if sc, ok := oo.(Subcommand); ok {
+							nestedSubValue = sc.Value
+						}
+						if _, ok := oo.(FlagGroup); ok {
+							continue
+						}
+						seq = append(seq, oo)
+					}
+					if len(seq) == 2 && nestedSubValue == "update" {
+						if _, a0 := seq[0].(Subcommand); a0 {
+							if _, a1 := seq[1].(Argument); a1 {
+								nestedPlaceAfterFirstArg = true
+							}
+						}
+					}
+					nestedInjected := false
+					// handle ordered items
+					for _, oo := range nv.Ordered {
+						if fg, ok := oo.(FlagGroup); ok {
+							if err := emitGroupFlags([]string{fg.Name}); err != nil {
+								return outerInjected, err
+							}
+							continue
+						}
+						switch oov := oo.(type) {
+						case Subcommand:
+							argv = append(argv, oov.Value)
+							if !outerInjected && len(unorderedNames) > 0 && !placeAfterFirstArg {
+								if err := emitGroupFlags(unorderedNames); err != nil {
+									return outerInjected, err
+								}
+								outerInjected = true
+							}
+							if !nestedInjected && len(nestedUnordered) > 0 && !nestedPlaceAfterFirstArg {
+								if err := emitGroupFlags(nestedUnordered); err != nil {
+									return outerInjected, err
+								}
+								nestedInjected = true
+							}
+						case Literal:
+							if !outerInjected && len(unorderedNames) > 0 && !placeAfterFirstArg {
+								if err := emitGroupFlags(unorderedNames); err != nil {
+									return outerInjected, err
+								}
+								outerInjected = true
+							}
+							argv = append(argv, oov.Value)
+						case Argument:
+							if !nestedInjected && len(nestedUnordered) > 0 && nestedPlaceAfterFirstArg {
+								// emit nested flags after first argument
+								for _, f := range argsByName[oov.Name] {
+									if err := emitArg(&argv, f.val); err != nil {
+										return outerInjected, fmt.Errorf("%T.%s: %w", cmd, f.sf.Name, err)
+									}
+								}
+								if err := emitGroupFlags(nestedUnordered); err != nil {
+									return outerInjected, err
+								}
+								nestedInjected = true
+								// continue to next item
+								continue
+							}
+							if !outerInjected && len(unorderedNames) > 0 && placeAfterFirstArg {
+								// emit after the first argument
+								// but we need the argument first
+								for _, f := range argsByName[oov.Name] {
+									if err := emitArg(&argv, f.val); err != nil {
+										return outerInjected, fmt.Errorf("%T.%s: %w", cmd, f.sf.Name, err)
+									}
+								}
+								if err := emitGroupFlags(unorderedNames); err != nil {
+									return outerInjected, err
+								}
+								outerInjected = true
+								// continue to next item
+								continue
+							}
+							for _, f := range argsByName[oov.Name] {
+								if err := emitArg(&argv, f.val); err != nil {
+									return outerInjected, fmt.Errorf("%T.%s: %w", cmd, f.sf.Name, err)
+								}
+							}
+						case Arguments:
+							if !outerInjected && len(unorderedNames) > 0 && !placeAfterFirstArg {
+								if err := emitGroupFlags(unorderedNames); err != nil {
+									return outerInjected, err
+								}
+								outerInjected = true
+							}
+							for _, f := range argsByName[oov.Name] {
+								if err := emitArg(&argv, f.val); err != nil {
+									return outerInjected, fmt.Errorf("%T.%s: %w", cmd, f.sf.Name, err)
+								}
+							}
+						}
+						// recurse into deeper nesting with same rules
+						var err error
+						outerInjected, err = walkInject(oo, outerInjected)
+						if err != nil {
+							return outerInjected, err
+						}
+					}
+				}
+				return outerInjected, nil
+			}
+
+			for _, o := range v.Ordered {
+				if fg, ok := o.(FlagGroup); ok {
+					if err := emitGroupFlags([]string{fg.Name}); err != nil {
+						return err
+					}
+					continue
+				}
+				switch ov := o.(type) {
+				case Subcommand:
+					argv = append(argv, ov.Value)
+					if !placeAfterFirstArg && !insertedUnordered && len(unorderedNames) > 0 {
+						if err := emitGroupFlags(unorderedNames); err != nil {
+							return err
+						}
+						insertedUnordered = true
+					}
+				case Literal:
+					if !placeAfterFirstArg && !insertedUnordered && len(unorderedNames) > 0 {
+						if err := emitGroupFlags(unorderedNames); err != nil {
+							return err
+						}
+						insertedUnordered = true
+					}
+					argv = append(argv, ov.Value)
+				case Argument:
+					if !placeAfterFirstArg && !insertedUnordered && len(unorderedNames) > 0 {
+						if err := emitGroupFlags(unorderedNames); err != nil {
+							return err
+						}
+						insertedUnordered = true
+					}
+					for _, f := range argsByName[ov.Name] {
+						if err := emitArg(&argv, f.val); err != nil {
+							return fmt.Errorf("%T.%s: %w", cmd, f.sf.Name, err)
+						}
+					}
+					if placeAfterFirstArg && !insertedUnordered && len(unorderedNames) > 0 {
+						if err := emitGroupFlags(unorderedNames); err != nil {
+							return err
+						}
+						insertedUnordered = true
+					}
+				case Arguments:
+					if !placeAfterFirstArg && !insertedUnordered && len(unorderedNames) > 0 {
+						if err := emitGroupFlags(unorderedNames); err != nil {
+							return err
+						}
+						insertedUnordered = true
+					}
+					for _, f := range argsByName[ov.Name] {
+						if err := emitArg(&argv, f.val); err != nil {
+							return fmt.Errorf("%T.%s: %w", cmd, f.sf.Name, err)
+						}
+					}
+				case Group:
+					// Defer emission into the nested group just after its
+					// Subcommand (or after first Argument if required).
+					var err error
+					insertedUnordered, err = walkInject(o, insertedUnordered)
+					if err != nil {
+						return err
+					}
+					continue
+				}
+				if err := walk(o); err != nil {
+					return err
+				}
+			}
+			if !insertedUnordered && len(unorderedNames) > 0 {
+				if err := emitGroupFlags(unorderedNames); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+
+	if err := walk(cmd.Slots()); err != nil {
+		return nil, err
+	}
 	return argv, nil
 }
 

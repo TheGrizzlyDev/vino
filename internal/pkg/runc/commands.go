@@ -552,8 +552,6 @@ type Features struct {
 	Global
 }
 
-
-
 func (Features) Slots() Slot {
 	return Group{
 		Ordered: []Slot{

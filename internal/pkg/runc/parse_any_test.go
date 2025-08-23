@@ -8,15 +8,16 @@ type cmdUnion struct {
 }
 
 type wrapperCmd[T Command] struct {
-	Command T `runc_embed:""`
+    Command T `runc_embed:""`
 
-	DelegatePath string `runc_flag:"--delegate_path" runc_group:"delegate"`
+    DelegatePath string `runc_flag:"--delegate_path" runc_group:"delegate"`
 }
 
-func (w wrapperCmd[T]) Subcommand() string { return w.Command.Subcommand() }
-
-func (w wrapperCmd[T]) Groups() []string {
-	return append([]string{"delegate"}, w.Command.Groups()...)
+func (w wrapperCmd[T]) Slots() Slot {
+    return Group{
+        Unordered: []Slot{FlagGroup{Name: "delegate"}},
+        Ordered:   []Slot{w.Command.Slots()},
+    }
 }
 
 func TestParseAny_Run(t *testing.T) {

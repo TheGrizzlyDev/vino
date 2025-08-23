@@ -14,23 +14,50 @@ func validateCommandTags(cmd Command) error {
 	}
 	typ := reflect.TypeOf(cmd)
 
-	if strings.TrimSpace(cmd.Subcommand()) == "" {
-		return fmt.Errorf("ValidateCommandTags: %s Subcommand() returned empty", typ)
-	}
-	groups := cmd.Groups()
-	if len(groups) == 0 {
-		return fmt.Errorf("ValidateCommandTags: %s Groups() returned empty", typ)
-	}
-	if dup := firstDuplicate(groups); dup != "" {
-		return fmt.Errorf(`ValidateCommandTags: %s Groups() contains duplicate group %q`, typ, dup)
-	}
-	if count(groups, "--") > 1 {
-		return fmt.Errorf(`ValidateCommandTags: %s Groups() contains "--" more than once`, typ)
-	}
-	declared := make(map[string]struct{}, len(groups))
-	for _, g := range groups {
-		declared[g] = struct{}{}
-	}
+    // Validate Slots(): must contain exactly one Subcommand and collect
+    // allowed flag-group names and argument names.
+    if strings.TrimSpace(subcommandOf(cmd)) == "" {
+        return fmt.Errorf("ValidateCommandTags: %s has no Subcommand in Slots()", typ)
+    }
+    allowedGroups := map[string]struct{}{}
+    allowedArgs := map[string]struct{}{}
+    // (no special casing of any literal values)
+    var walk func(Slot)
+    walk = func(s Slot) {
+        switch v := s.(type) {
+        case Group:
+            // accumulate unordered flag groups
+            for _, u := range v.Unordered {
+                if fg, ok := u.(FlagGroup); ok {
+                    if name := strings.TrimSpace(fg.Name); name != "" {
+                        allowedGroups[name] = struct{}{}
+                    }
+                }
+            }
+            // process ordered items and recurse
+            for _, o := range v.Ordered {
+                switch ov := o.(type) {
+                case FlagGroup:
+                    if name := strings.TrimSpace(ov.Name); name != "" {
+                        allowedGroups[name] = struct{}{}
+                    }
+                case Argument:
+                    if n := strings.TrimSpace(ov.Name); n != "" {
+                        allowedArgs[n] = struct{}{}
+                    }
+                case Arguments:
+                    if n := strings.TrimSpace(ov.Name); n != "" {
+                        allowedArgs[n] = struct{}{}
+                    }
+                case Literal:
+                    // literals don't affect tag validation
+                }
+                walk(o)
+            }
+        }
+    }
+    walk(cmd.Slots())
+    // no literal-specific validation
 
 	var errs []string
 	v := reflect.ValueOf(cmd)
@@ -63,15 +90,11 @@ func validateCommandTags(cmd Command) error {
 			} else if !looksLikeFlag(flag) {
 				errs = append(errs, fmt.Sprintf("%s: field %q runc_flag=%q must start with '-' or '--'", typ, sf.Name, flag))
 			}
-			if !hasGroup || strings.TrimSpace(group) == "" {
-				errs = append(errs, fmt.Sprintf("%s: field %q (flag %q) missing required runc_group", typ, sf.Name, flag))
-			} else {
-				if group == "--" {
-					errs = append(errs, fmt.Sprintf(`%s: field %q (flag %q) uses forbidden group "--" (use "--" only in Groups())`, typ, sf.Name, flag))
-				} else if _, ok := declared[group]; !ok {
-					errs = append(errs, fmt.Sprintf(`%s: field %q (flag %q) references group %q not present in Groups()`, typ, sf.Name, flag, group))
-				}
-			}
+            if !hasGroup || strings.TrimSpace(group) == "" {
+                errs = append(errs, fmt.Sprintf("%s: field %q (flag %q) missing required runc_group", typ, sf.Name, flag))
+            } else if _, ok := allowedGroups[group]; !ok {
+                errs = append(errs, fmt.Sprintf(`%s: field %q (flag %q) references group %q not present in Slots()`, typ, sf.Name, flag, group))
+            }
 			// alternatives
 			if hasAlt {
 				altsRaw := strings.Split(altSpec, "|")
@@ -109,19 +132,15 @@ func validateCommandTags(cmd Command) error {
 
 		// --- runc_argument rules (tags only) ---
 		if hasArg {
-			if hasGroup {
-				errs = append(errs, fmt.Sprintf("%s: field %q (argument %q) must NOT set runc_group", typ, sf.Name, argGroup))
-			}
-			argGroup = strings.TrimSpace(argGroup)
-			if argGroup == "" {
-				errs = append(errs, fmt.Sprintf("%s: field %q has empty runc_argument", typ, sf.Name))
-			} else {
-				if argGroup == "--" {
-					errs = append(errs, fmt.Sprintf(`%s: field %q uses forbidden runc_argument "--" (use "--" only in Groups())`, typ, sf.Name))
-				} else if _, ok := declared[argGroup]; !ok {
-					errs = append(errs, fmt.Sprintf(`%s: field %q (argument %q) references group %q not present in Groups()`, typ, sf.Name, argGroup, argGroup))
-				}
-			}
+            if hasGroup {
+                errs = append(errs, fmt.Sprintf("%s: field %q (argument %q) must NOT set runc_group", typ, sf.Name, argGroup))
+            }
+            argGroup = strings.TrimSpace(argGroup)
+            if argGroup == "" {
+                errs = append(errs, fmt.Sprintf("%s: field %q has empty runc_argument", typ, sf.Name))
+            } else if _, ok := allowedArgs[argGroup]; !ok {
+                errs = append(errs, fmt.Sprintf(`%s: field %q (argument %q) not present in Slots()`, typ, sf.Name, argGroup))
+            }
 			// runc_enum on arguments is meaningless in this model; reject if present
 			if hasEnum {
 				errs = append(errs, fmt.Sprintf(`%s: field %q (argument %q) must not have runc_enum`, typ, sf.Name, argGroup))

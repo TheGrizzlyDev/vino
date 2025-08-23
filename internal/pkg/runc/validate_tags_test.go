@@ -26,13 +26,13 @@ func TestValidateCommandTags(t *testing.T) {
 		Update{},
 	}
 
-	for _, c := range commands {
-		c := c
-		t.Run(c.Subcommand(), func(t *testing.T) {
-			t.Parallel()
-			if err := validateCommandTags(c); err != nil {
-				t.Fatalf("%T: %v", c, err)
-			}
-		})
-	}
+    for _, c := range commands {
+        c := c
+        t.Run(subcommandOf(c), func(t *testing.T) {
+            t.Parallel()
+            if err := validateCommandTags(c); err != nil {
+                t.Fatalf("%T: %v", c, err)
+            }
+        })
+    }
 }
