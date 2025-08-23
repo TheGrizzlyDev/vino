@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"log"
 	"os"
@@ -87,23 +86,22 @@ func TestInheritedFDs(t *testing.T) {
 	defer r1.Close()
 	defer w1.Close()
 
-	files, err := inheritedFDs()
+	fds, err := inheritedFDs()
 	if err != nil {
 		t.Fatalf("inheritedFDs: %v", err)
 	}
-	want := map[string]bool{
-		fmt.Sprintf("fd-%d", r1.Fd()): false,
-		fmt.Sprintf("fd-%d", w1.Fd()): false,
+	want := map[int]bool{
+		int(r1.Fd()): false,
+		int(w1.Fd()): false,
 	}
-	for _, f := range files {
-		if _, ok := want[f.Name()]; ok {
-			want[f.Name()] = true
+	for _, fd := range fds {
+		if _, ok := want[fd]; ok {
+			want[fd] = true
 		}
-		f.Close()
 	}
-	for name, seen := range want {
+	for fd, seen := range want {
 		if !seen {
-			t.Fatalf("missing forwarded fd %s", name)
+			t.Fatalf("missing forwarded fd %d", fd)
 		}
 	}
 }
@@ -116,25 +114,24 @@ func TestInheritedFDsExclude(t *testing.T) {
 	defer r1.Close()
 	defer w1.Close()
 
-	files, err := inheritedFDs(int(r1.Fd()))
+	fds, err := inheritedFDs(int(r1.Fd()))
 	if err != nil {
 		t.Fatalf("inheritedFDs: %v", err)
 	}
-	want := map[string]bool{
-		fmt.Sprintf("fd-%d", w1.Fd()): false,
+	want := map[int]bool{
+		int(w1.Fd()): false,
 	}
-	for _, f := range files {
-		if f.Name() == fmt.Sprintf("fd-%d", r1.Fd()) {
-			t.Fatalf("found excluded fd %s", f.Name())
+	for _, fd := range fds {
+		if fd == int(r1.Fd()) {
+			t.Fatalf("found excluded fd %d", fd)
 		}
-		if _, ok := want[f.Name()]; ok {
-			want[f.Name()] = true
+		if _, ok := want[fd]; ok {
+			want[fd] = true
 		}
-		f.Close()
 	}
-	for name, seen := range want {
+	for fd, seen := range want {
 		if !seen {
-			t.Fatalf("missing forwarded fd %s", name)
+			t.Fatalf("missing forwarded fd %d", fd)
 		}
 	}
 }

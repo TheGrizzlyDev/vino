@@ -158,7 +158,7 @@ func requiresStdin(cmd runc.Command) bool {
 	}
 }
 
-func inheritedFDs(exclude ...int) ([]*os.File, error) {
+func inheritedFDs(exclude ...int) ([]int, error) {
 	dir, err := os.Open("/proc/self/fd")
 	if err != nil {
 		return nil, err
@@ -186,25 +186,17 @@ func inheritedFDs(exclude ...int) ([]*os.File, error) {
 		if _, skip := excluded[fd]; skip {
 			continue
 		}
-		if _, skip := excluded[fd]; skip {
-			continue
-		}
-		fds = append(fds, fd)
-	}
-	sort.Ints(fds)
-
-	files := make([]*os.File, 0, len(fds))
-	for _, fd := range fds {
-		if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err != nil {
+		if _, err := unix.FcntlInt(uintptr(fd), unix.F_SETFD, 0); err != nil {
 			if err == unix.EBADF {
 				continue
 			}
 			return nil, fmt.Errorf("fcntl fd %d: %w", fd, err)
 		}
-
-		files = append(files, os.NewFile(uintptr(fd), fmt.Sprintf("fd-%d", fd)))
+		fds = append(fds, fd)
 	}
-	return files, nil
+
+	sort.Ints(fds)
+	return fds, nil
 }
 
 func main() {
@@ -278,8 +270,6 @@ func main() {
 	fds, err := inheritedFDs(logFD)
 	if err != nil {
 		log.Printf("failed to collect inherited fds: %v", err)
-	} else if len(fds) > 0 {
-		execCmd.ExtraFiles = append(execCmd.ExtraFiles, fds...)
 	}
 
 	log.Printf("executing command: %s %v\n", execCmd.Path, execCmd.Args)
@@ -308,8 +298,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "command start failed: %v\nenv: %v", err, os.Environ())
 		os.Exit(1)
 	}
-	for _, f := range fds {
-		f.Close()
+	for _, fd := range fds {
+		unix.Close(fd)
 	}
 	if err := execCmd.Wait(); err != nil {
 		os.Stdout.Write(stdout.Bytes())
