@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/TheGrizzlyDev/vino/internal/pkg/runc"
+	"golang.org/x/sys/unix"
 )
 
 type logWriter struct {
@@ -159,7 +160,15 @@ func requiresStdin(cmd runc.Command) bool {
 }
 
 func inheritedFDs(exclude ...int) ([]*os.File, error) {
-	entries, err := os.ReadDir("/proc/self/fd")
+	dir, err := os.Open("/proc/self/fd")
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+
+	dirFD := int(dir.Fd())
+
+	entries, err := dir.ReadDir(-1)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +181,10 @@ func inheritedFDs(exclude ...int) ([]*os.File, error) {
 	var fds []int
 	for _, e := range entries {
 		fd, err := strconv.Atoi(e.Name())
-		if err != nil || fd < 3 {
+		if err != nil || fd < 3 || fd == dirFD {
+			continue
+		}
+		if _, skip := excluded[fd]; skip {
 			continue
 		}
 		if _, skip := excluded[fd]; skip {
@@ -184,6 +196,13 @@ func inheritedFDs(exclude ...int) ([]*os.File, error) {
 
 	files := make([]*os.File, 0, len(fds))
 	for _, fd := range fds {
+		if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err != nil {
+			if err == unix.EBADF {
+				continue
+			}
+			return nil, fmt.Errorf("fcntl fd %d: %w", fd, err)
+		}
+
 		dup, err := syscall.Dup(fd)
 		if err != nil {
 			return nil, fmt.Errorf("dup fd %d: %w", fd, err)
