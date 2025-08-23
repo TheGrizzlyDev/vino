@@ -107,3 +107,34 @@ func TestInheritedFDs(t *testing.T) {
 		}
 	}
 }
+
+func TestInheritedFDsExclude(t *testing.T) {
+	r1, w1, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe1: %v", err)
+	}
+	defer r1.Close()
+	defer w1.Close()
+
+	files, err := inheritedFDs(int(r1.Fd()))
+	if err != nil {
+		t.Fatalf("inheritedFDs: %v", err)
+	}
+	want := map[string]bool{
+		fmt.Sprintf("fd-%d", w1.Fd()): false,
+	}
+	for _, f := range files {
+		if f.Name() == fmt.Sprintf("fd-%d", r1.Fd()) {
+			t.Fatalf("found excluded fd %s", f.Name())
+		}
+		if _, ok := want[f.Name()]; ok {
+			want[f.Name()] = true
+		}
+		f.Close()
+	}
+	for name, seen := range want {
+		if !seen {
+			t.Fatalf("missing forwarded fd %s", name)
+		}
+	}
+}

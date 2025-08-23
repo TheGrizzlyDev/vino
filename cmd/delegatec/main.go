@@ -158,16 +158,24 @@ func requiresStdin(cmd runc.Command) bool {
 	}
 }
 
-func inheritedFDs() ([]*os.File, error) {
+func inheritedFDs(exclude ...int) ([]*os.File, error) {
 	entries, err := os.ReadDir("/proc/self/fd")
 	if err != nil {
 		return nil, err
+	}
+
+	excluded := make(map[int]struct{}, len(exclude))
+	for _, fd := range exclude {
+		excluded[fd] = struct{}{}
 	}
 
 	var fds []int
 	for _, e := range entries {
 		fd, err := strconv.Atoi(e.Name())
 		if err != nil || fd < 3 {
+			continue
+		}
+		if _, skip := excluded[fd]; skip {
 			continue
 		}
 		fds = append(fds, fd)
@@ -190,6 +198,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("error opening file: %v", err)
 	}
+	logFD := int(f.Fd())
 	defer f.Close()
 	log.SetOutput(f)
 
@@ -252,7 +261,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fds, err := inheritedFDs()
+	fds, err := inheritedFDs(logFD)
 	if err != nil {
 		log.Printf("failed to collect inherited fds: %v", err)
 	} else if len(fds) > 0 {
