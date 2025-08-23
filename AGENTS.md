@@ -6,6 +6,7 @@
 - Library code: `internal/pkg/runc/` — command model, CLI parsing, client.
 - Tests: unit tests alongside packages (`*_test.go`), integration tests in `tests/integration/dind/`.
 - Images: Dockerfiles under `images/` for development/integration use.
+ - Parser spec: see `internal/pkg/runc/cli_parser_design.md` (authoritative Slots semantics and parsing rules).
 
 ## Build, Test, and Development Commands
 - Build all: `go build ./...` — verifies packages compile.
@@ -32,4 +33,3 @@
 - PRs: include problem statement, summary of changes, test evidence (`go test` output), and any breaking changes.
 - Link issues: reference with `Fixes #123` or `Refs #123`.
 - Screenshots/logs: attach relevant CLI output (e.g., failing `runc` args) when debugging parser changes.
-

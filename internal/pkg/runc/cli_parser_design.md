@@ -158,3 +158,36 @@ The parsing process is orchestrated by two main functions: `ParseAny` and `Parse
         *   If all slots are satisfied and no extraneous arguments remain, `Parse` returns `(true, nil)`. If a slot fails to match after a preliminary match (e.g., wrong flag value), it returns `(true, err)`. If the overall shape does not match the command (e.g., different subcommand name), it returns `(false, nil)`.
 
 This structured approach provides a powerful and explicit way to define complex CLI parsing rules, enhancing readability, maintainability, and composability.
+
+---
+
+## Revised Semantics (Current Implementation)
+
+The implementation has evolved; this section clarifies the authoritative behavior and supersedes conflicting notes above where applicable.
+
+1) Root shape
+- `Command.Slots()` returns a single root `Slot` (always a `Group`).
+
+2) Unordered vs Ordered
+- Unordered (`Group.Unordered`): lists `FlagGroup`s whose flags are valid anywhere within that Group’s span (before and after ordered items, and inside nested Groups). Ancestor Unordered sets are inherited by descendants.
+- Ordered (`Group.Ordered`): items are strict relative to each other. An ordered `FlagGroup` opens a position‑specific window where only its flags are valid.
+
+3) Literals
+- `Literal` tokens (including `--`) are matched as‑is and have no implicit side effects. Any “post‑separator” behavior should be modeled using Slots (e.g., `Literal{"--"}` followed by `Arguments{"args"}`).
+
+4) Parsing strategy (informative)
+- Recursive descent over `Slots()`, maintaining the union of ancestor + current Unordered sets as the active Unordered flags.
+- Before and after each ordered item, greedily consume any number of flags from the active Unordered set.
+- For an ordered `FlagGroup`, consume only that group’s flags at that position.
+- Unknown flag at a position ends the current flag window so later items can claim it; if no later item accepts it, it’s an error.
+- `Arguments` must be last within its parsing segment.
+- `--flag=value` is expanded into `--flag value` before parsing.
+
+5) Generation strategy (informative)
+- Emit `Subcommand` first, then place Unordered flags and Ordered items consistent with the same visibility rules. If Unordered flags should appear after a specific `Argument` (e.g., `update <id> [flags]`), structure Slots accordingly so the parser/generator follow the same rules mechanically.
+
+6) Embedding
+- `runc_embed:""` treats a named field as if anonymously embedded for tag collection; nested `Group`s naturally model wrappers that add Unordered/Ordered items around an inner command.
+
+7) Validation
+- Tags are validated against the Slot tree: `runc_flag` must reference an existing `FlagGroup` name; `runc_argument` names must exist as ordered `Argument`/`Arguments` in the Slot tree; `runc_flag_alternatives` expand lookups; `runc_enum` constrains stringish fields.

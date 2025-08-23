@@ -69,75 +69,50 @@ func Parse(cmd Command, args []string) error {
     if cmd == nil {
         return fmt.Errorf("Parse: nil cmd")
     }
-    // validate tags first
     if err := validateCommandTags(cmd); err != nil {
         return err
     }
 
-	// Support flags in the form --flag=value by splitting them into
-	// separate tokens before processing.
-	args = expandEquals(args)
+    // Expand --flag=value
+    args = expandEquals(args)
 
-	type fieldInfo struct {
-		sf   reflect.StructField
-		val  reflect.Value
-		flag string   // runc_flag
-		alts []string // runc_flag_alternatives
-		argG string   // runc_argument (group)
-		grp  string   // runc_group for flags
-	}
+    type fieldInfo struct {
+        sf   reflect.StructField
+        val  reflect.Value
+        flag string
+        alts []string
+        argG string
+        grp  string
+    }
 
-	v := reflect.ValueOf(cmd).Elem()
-	var fields []fieldInfo
-	walkStruct(v, func(sf reflect.StructField, fv reflect.Value) {
-		flag, hasFlag := sf.Tag.Lookup("runc_flag")
-		altSpec, hasAlt := sf.Tag.Lookup("runc_flag_alternatives")
-		argG, hasArg := sf.Tag.Lookup("runc_argument")
-		grp, _ := sf.Tag.Lookup("runc_group")
+    v := reflect.ValueOf(cmd).Elem()
+    var fields []fieldInfo
+    walkStruct(v, func(sf reflect.StructField, fv reflect.Value) {
+        flag, hasFlag := sf.Tag.Lookup("runc_flag")
+        altSpec, hasAlt := sf.Tag.Lookup("runc_flag_alternatives")
+        argG, hasArg := sf.Tag.Lookup("runc_argument")
+        grp, _ := sf.Tag.Lookup("runc_group")
+        if !hasFlag && !hasArg {
+            return
+        }
+        var alts []string
+        if hasAlt {
+            for _, a := range strings.Split(altSpec, "|") {
+                a = strings.TrimSpace(a)
+                if a != "" {
+                    alts = append(alts, a)
+                }
+            }
+        }
+        fields = append(fields, fieldInfo{sf: sf, val: fv, flag: func() string { if hasFlag { return flag }; return "" }(), alts: alts, argG: func() string { if hasArg { return argG }; return "" }(), grp: grp})
+    })
 
-		if !hasFlag && !hasArg {
-			return
-		}
-		var alts []string
-		if hasAlt {
-			for _, a := range strings.Split(altSpec, "|") {
-				a = strings.TrimSpace(a)
-				if a != "" {
-					alts = append(alts, a)
-				}
-			}
-		}
-		fields = append(fields, fieldInfo{
-			sf:  sf,
-			val: fv,
-			flag: func() string {
-				if hasFlag {
-					return flag
-				}
-				return ""
-			}(),
-			alts: alts,
-			argG: func() string {
-				if hasArg {
-					return argG
-				}
-				return ""
-			}(),
-			grp: grp,
-		})
-	})
-
-    // Build maps for flags and argument names
-    flagByToken := map[string]*fieldInfo{}
+    // Indexes
     flagsByGroup := map[string][]*fieldInfo{}
     argsByName := map[string][]*fieldInfo{}
     for i := range fields {
         f := &fields[i]
         if f.flag != "" {
-            flagByToken[f.flag] = f
-            for _, a := range f.alts {
-                flagByToken[a] = f
-            }
             flagsByGroup[f.grp] = append(flagsByGroup[f.grp], f)
         }
         if f.argG != "" {
@@ -145,148 +120,132 @@ func Parse(cmd Command, args []string) error {
         }
     }
 
-    // Build a sequence of parsing actions by walking Slots().
-    type segment interface{}
-    type flagSegment struct{ groups []string }
-    type literalSegment struct{ value string }
-    type argSegment struct{ name string; variadic bool }
-
-    var segs []segment
-    var walk func(Slot)
-    walk = func(s Slot) {
-        switch v := s.(type) {
-        case Group:
-            insertedUnordered := false
-            // Prefer placing unordered flags after [Subcommand, Argument]
-            // if that exact pattern occurs; otherwise place before the
-            // first non-FlagGroup token.
-            placeAfterFirstArg := false
-            {
-                var seq []Slot
-                for _, o := range v.Ordered {
-                    if _, ok := o.(FlagGroup); ok { continue }
-                    seq = append(seq, o)
-                }
-                if len(seq) == 2 && subcommandOf(cmd) == "update" {
-                    _, a0 := seq[0].(Subcommand)
-                    _, a1 := seq[1].(Argument)
-                    if a0 && a1 { placeAfterFirstArg = true }
-                }
-            }
-            // helper to append unordered flags once
-            appendUnordered := func() {
-                if insertedUnordered || len(v.Unordered) == 0 { return }
-                var names []string
-                for _, u := range v.Unordered {
-                    if fg, ok := u.(FlagGroup); ok { names = append(names, fg.Name) }
-                }
-                if len(names) > 0 {
-                    segs = append(segs, flagSegment{groups: names})
-                }
-                insertedUnordered = true
-            }
-            for _, o := range v.Ordered {
-                if fg, ok := o.(FlagGroup); ok {
-                    // Ignore the special "global" group in per-command parsing.
-                    if fg.Name != "global" {
-                        segs = append(segs, flagSegment{groups: []string{fg.Name}})
-                    }
-                } else {
-                    switch ov := o.(type) {
-                    case Subcommand:
-                        // Subcommand token consumed by ParseAny; insert unordered
-                        // here only if we are NOT delaying until after first arg.
-                        if !placeAfterFirstArg {
-                            appendUnordered()
-                        }
-                    case Literal:
-                        appendUnordered()
-                        segs = append(segs, literalSegment{value: ov.Value})
-                    case Argument:
-                        if placeAfterFirstArg {
-                            // First capture the argument, then place unordered flags
-                            segs = append(segs, argSegment{name: ov.Name})
-                            appendUnordered()
-                        } else {
-                            appendUnordered()
-                            segs = append(segs, argSegment{name: ov.Name})
-                        }
-                    case Arguments:
-                        appendUnordered()
-                        segs = append(segs, argSegment{name: ov.Name, variadic: true})
-                    }
-                }
-                // If next is a nested group and we didn't insert yet (and
-                // we're not delaying), insert before recursing so flags can
-                // appear before nested tokens like Subcommand.
-                if _, isGroup := o.(Group); isGroup && !insertedUnordered && !placeAfterFirstArg {
-                    appendUnordered()
-                }
-                walk(o)
-            }
-            if !insertedUnordered {
-                // no non-flag ordered items; place unordered at end
-                var names []string
-                for _, u := range v.Unordered { if fg, ok := u.(FlagGroup); ok { names = append(names, fg.Name) } }
-                if len(names) > 0 { segs = append(segs, flagSegment{groups: names}) }
+    // Build token maps for groups
+    tokensForGroups := func(groups []string) map[string]*fieldInfo {
+        m := map[string]*fieldInfo{}
+        for _, g := range groups {
+            for _, f := range flagsByGroup[g] {
+                m[f.flag] = f
+                for _, a := range f.alts { m[a] = f }
             }
         }
+        return m
     }
-    walk(cmd.Slots())
 
+    // Recursively parse slots with inherited unordered groups
     idx := 0
-    for si, sg := range segs {
-        switch s := sg.(type) {
-        case flagSegment:
-            // collect allowed flags
-            allowed := map[string]*fieldInfo{}
-            for _, g := range s.groups {
-                for _, f := range flagsByGroup[g] {
-                    allowed[f.flag] = f
-                    for _, a := range f.alts { allowed[a] = f }
-                }
+
+    var collectUnordered func(g Group) []string
+    collectUnordered = func(g Group) []string {
+        var names []string
+        for _, u := range g.Unordered {
+            if fg, ok := u.(FlagGroup); ok {
+                names = append(names, fg.Name)
             }
-            for idx < len(args) {
-                tok := args[idx]
-                fi, ok := allowed[tok]
-                if !ok {
-                    // not a flag for this segment; move to next segment
-                    break
-                }
-                idx++
-                if flagTakesValue(fi.val) {
-                    if idx >= len(args) { return fmt.Errorf("flag %s requires value", tok) }
-                    val := args[idx]; idx++
-                    if err := setValue(fi.val, val); err != nil { return fmt.Errorf("%s: %w", fi.sf.Name, err) }
-                } else {
-                    if err := setValue(fi.val, ""); err != nil { return fmt.Errorf("%s: %w", fi.sf.Name, err) }
-                }
-            }
-        case literalSegment:
-            if idx >= len(args) || args[idx] != s.value {
-                return fmt.Errorf("expected literal %q", s.value)
+        }
+        return names
+    }
+
+    // Consume flags from allowed set greedily; unknown flag ends window (no error here)
+    consumeFlags := func(allowed map[string]*fieldInfo) error {
+        for idx < len(args) {
+            tok := args[idx]
+            fi, ok := allowed[tok]
+            if !ok {
+                // not allowed here; leave for later items
+                break
             }
             idx++
-        case argSegment:
-            fs := argsByName[s.name]
-            for _, fi := range fs {
-                if fi.val.Kind() == reflect.Slice || (fi.val.Kind() == reflect.Pointer && fi.val.Elem().Kind() == reflect.Slice) || s.variadic {
-                    if si != len(segs)-1 {
-                        return fmt.Errorf("slice argument %s must be last", s.name)
+            if flagTakesValue(fi.val) {
+                if idx >= len(args) { return fmt.Errorf("flag %s requires value", tok) }
+                val := args[idx]
+                idx++
+                if err := setValue(fi.val, val); err != nil { return fmt.Errorf("%s: %w", fi.sf.Name, err) }
+            } else {
+                if err := setValue(fi.val, ""); err != nil { return fmt.Errorf("%s: %w", fi.sf.Name, err) }
+            }
+        }
+        return nil
+    }
+
+    var parse func(s Slot, inheritedUnordered []string) error
+    parse = func(s Slot, inheritedUnordered []string) error {
+        switch v := s.(type) {
+        case Group:
+            // Active unordered groups = inherited + this group's unordered
+            localUnordered := append([]string{}, inheritedUnordered...)
+            localUnordered = append(localUnordered, collectUnordered(v)...)
+            unorderedTokens := tokensForGroups(localUnordered)
+
+            // Walk ordered items in sequence
+            blockUnordered := false
+            for i := 0; i < len(v.Ordered); i++ {
+                // Determine whether the next ordered item is a Literal
+                nextIsLiteral := false
+                if i+1 < len(v.Ordered) {
+                    _, nextIsLiteral = v.Ordered[i+1].(Literal)
+                }
+
+                // Greedily consume unordered before this item (unless blocked or this item is a Literal)
+                if _, isLit := v.Ordered[i].(Literal); !blockUnordered && !isLit {
+                    if err := consumeFlags(unorderedTokens); err != nil { return err }
+                }
+
+                switch ov := v.Ordered[i].(type) {
+                case FlagGroup:
+                    // Position-specific flag window
+                    allowed := tokensForGroups([]string{ov.Name})
+                    if err := consumeFlags(allowed); err != nil { return err }
+                case Subcommand:
+                    // Subcommand token is removed by ParseAny; act as anchor only
+                case Literal:
+                    if idx >= len(args) || args[idx] != ov.Value {
+                        return fmt.Errorf("expected literal %q", ov.Value)
                     }
-                    for idx < len(args) {
-                        val := args[idx]; idx++
+                    idx++
+                    // After a Literal, disable unordered flags for the rest of this Group
+                    blockUnordered = true
+                case Argument:
+                    fs := argsByName[ov.Name]
+                    for _, fi := range fs {
+                        if idx >= len(args) { return fmt.Errorf("missing value for %s", ov.Name) }
+                        val := args[idx]
+                        idx++
                         if err := setValue(fi.val, val); err != nil { return fmt.Errorf("%s: %w", fi.sf.Name, err) }
                     }
-                } else {
-                    if idx >= len(args) { return fmt.Errorf("missing value for %s", s.name) }
-                    val := args[idx]; idx++
-                    if err := setValue(fi.val, val); err != nil { return fmt.Errorf("%s: %w", fi.sf.Name, err) }
+                case Arguments:
+                    // must be last within this group's ordered sequence
+                    if i != len(v.Ordered)-1 {
+                        return fmt.Errorf("variadic arguments %s must be last", ov.Name)
+                    }
+                    fs := argsByName[ov.Name]
+                    for idx < len(args) {
+                        val := args[idx]
+                        // No special literal handling; literals must be next ordered
+                        idx++
+                        for _, fi := range fs {
+                            if err := setValue(fi.val, val); err != nil { return fmt.Errorf("%s: %w", fi.sf.Name, err) }
+                        }
+                    }
+                default:
+                    // Nested slot (e.g., nested Group)
+                    if err := parse(ov, localUnordered); err != nil { return err }
+                }
+                // Greedily consume unordered after this item unless blocked or next ordered is a Literal
+                if !blockUnordered && !nextIsLiteral {
+                    if err := consumeFlags(unorderedTokens); err != nil { return err }
                 }
             }
+            return nil
+        default:
+            // nothing to do for other root-level non-group (not expected)
+            return nil
         }
     }
 
+    if err := parse(cmd.Slots(), nil); err != nil {
+        return err
+    }
     if idx != len(args) {
         return fmt.Errorf("unexpected trailing args: %v", args[idx:])
     }
