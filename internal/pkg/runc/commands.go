@@ -139,7 +139,7 @@ func (Restore) Slots() Slot {
 			FlagGroup{Name: "lifecycle"},
 			FlagGroup{Name: "images"},
 			FlagGroup{Name: "criu"},
-			FlagGroup{Name: "cgroup"},
+			FlagGroup{Name: "cgroups"},
 			FlagGroup{Name: "namespaces"},
 			FlagGroup{Name: "security"},
 		},
@@ -320,7 +320,7 @@ func (Kill) Slots() Slot {
 		},
 		Ordered: []Slot{
 			FlagGroup{Name: "global"},
-			Subcommand{Value: "pause"},
+			Subcommand{Value: "kill"},
 			Argument{Name: "container_id"},
 			Argument{Name: "signal"},
 		},
@@ -417,7 +417,7 @@ func (Events) Slots() Slot {
 		Ordered: []Slot{
 			FlagGroup{Name: "global"},
 			Subcommand{Value: "events"},
-			Arguments{Name: "container_id"},
+			Argument{Name: "container_id"},
 		},
 	}
 }
@@ -552,8 +552,7 @@ type Features struct {
 	Global
 }
 
-func (f Features) Subcommand() string { return "features" }
-func (f Features) Groups() []string   { return []string{"global"} }
+
 
 func (Features) Slots() Slot {
 	return Group{
