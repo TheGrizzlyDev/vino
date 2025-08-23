@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/TheGrizzlyDev/vino/internal/pkg/runc"
@@ -203,11 +202,7 @@ func inheritedFDs(exclude ...int) ([]*os.File, error) {
 			return nil, fmt.Errorf("fcntl fd %d: %w", fd, err)
 		}
 
-		dup, err := syscall.Dup(fd)
-		if err != nil {
-			return nil, fmt.Errorf("dup fd %d: %w", fd, err)
-		}
-		files = append(files, os.NewFile(uintptr(dup), fmt.Sprintf("fd-%d", fd)))
+		files = append(files, os.NewFile(uintptr(fd), fmt.Sprintf("fd-%d", fd)))
 	}
 	return files, nil
 }
