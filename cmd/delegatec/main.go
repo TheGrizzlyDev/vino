@@ -17,12 +17,15 @@ type DelegatecCmd[T runc.Command] struct {
 	DelegatePath string `runc_flag:"--delegate_path" runc_group:"delegate"`
 }
 
-func (d *DelegatecCmd[T]) Subcommand() string {
-	return d.Command.Subcommand()
-}
-
-func (d *DelegatecCmd[T]) Groups() []string {
-	return append([]string{"delegate"}, d.Command.Groups()...)
+func (d DelegatecCmd[T]) Slots() runc.Slot {
+	return runc.Group{
+		Unordered: []runc.Slot{
+			runc.FlagGroup{Name: "delegate"},
+		},
+		Ordered: []runc.Slot{
+			d.Command.Slots(),
+		},
+	}
 }
 
 type Commands struct {

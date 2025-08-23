@@ -7,8 +7,7 @@ import (
 )
 
 type Command interface {
-	Subcommand() string
-	Groups() []string
+	Slots() Slot
 }
 
 type RunResult struct {

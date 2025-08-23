@@ -51,8 +51,6 @@ type Global struct {
 	Rootless      string `runc_flag:"--rootless"        runc_group:"global" runc_enum:"true|false|auto"`
 }
 
-func (g Global) Groups() []string { return []string{"global"} }
-
 // ------------------------------------------------------------
 // checkpoint
 // Manpage: runc-checkpoint(8) — https://manpages.debian.org/bookworm/runc/runc-checkpoint.8.en.html
@@ -83,9 +81,21 @@ type Checkpoint struct {
 	ContainerID string `runc_argument:"container_id"`
 }
 
-func (c Checkpoint) Subcommand() string { return "checkpoint" }
-func (c Checkpoint) Groups() []string {
-	return []string{"global", "images", "criu", "cgroups", "namespaces", "lifecycle", "container_id"}
+func (Checkpoint) Slots() Slot {
+	return Group{
+		Unordered: []Slot{
+			FlagGroup{Name: "images"},
+			FlagGroup{Name: "criu"},
+			FlagGroup{Name: "cgroups"},
+			FlagGroup{Name: "namespaces"},
+			FlagGroup{Name: "lifecycle"},
+		},
+		Ordered: []Slot{
+			FlagGroup{Name: "global"},
+			Subcommand{Value: "checkpoint"},
+			Argument{Name: "container_id"},
+		},
+	}
 }
 
 // ------------------------------------------------------------
@@ -120,9 +130,25 @@ type Restore struct {
 	ContainerID string `runc_argument:"container_id"`
 }
 
-func (r Restore) Subcommand() string { return "restore" }
-func (r Restore) Groups() []string {
-	return []string{"global", "bundle", "console", "runtime", "lifecycle", "images", "criu", "cgroups", "namespaces", "security", "container_id"}
+func (Restore) Slots() Slot {
+	return Group{
+		Unordered: []Slot{
+			FlagGroup{Name: "bundle"},
+			FlagGroup{Name: "console"},
+			FlagGroup{Name: "runtime"},
+			FlagGroup{Name: "lifecycle"},
+			FlagGroup{Name: "images"},
+			FlagGroup{Name: "criu"},
+			FlagGroup{Name: "cgroup"},
+			FlagGroup{Name: "namespaces"},
+			FlagGroup{Name: "security"},
+		},
+		Ordered: []Slot{
+			FlagGroup{Name: "global"},
+			Subcommand{Value: "restore"},
+			Argument{Name: "container_id"},
+		},
+	}
 }
 
 // ------------------------------------------------------------
@@ -141,9 +167,20 @@ type Create struct {
 	ContainerID string `runc_argument:"container_id"`
 }
 
-func (c Create) Subcommand() string { return "create" }
-func (c Create) Groups() []string {
-	return []string{"global", "bundle", "console", "runtime", "lifecycle", "container_id"}
+func (Create) Slots() Slot {
+	return Group{
+		Unordered: []Slot{
+			FlagGroup{Name: "bundle"},
+			FlagGroup{Name: "console"},
+			FlagGroup{Name: "runtime"},
+			FlagGroup{Name: "lifecycle"},
+		},
+		Ordered: []Slot{
+			FlagGroup{Name: "global"},
+			Subcommand{Value: "create"},
+			Argument{Name: "container_id"},
+		},
+	}
 }
 
 // ------------------------------------------------------------
@@ -164,9 +201,20 @@ type Run struct {
 	ContainerID string `runc_argument:"container_id"`
 }
 
-func (r Run) Subcommand() string { return "run" }
-func (r Run) Groups() []string {
-	return []string{"global", "bundle", "console", "runtime", "lifecycle", "container_id"}
+func (Run) Slots() Slot {
+	return Group{
+		Unordered: []Slot{
+			FlagGroup{Name: "bundle"},
+			FlagGroup{Name: "console"},
+			FlagGroup{Name: "runtime"},
+			FlagGroup{Name: "lifecycle"},
+		},
+		Ordered: []Slot{
+			FlagGroup{Name: "global"},
+			Subcommand{Value: "run"},
+			Argument{Name: "container_id"},
+		},
+	}
 }
 
 // ------------------------------------------------------------
@@ -179,8 +227,15 @@ type Start struct {
 	ContainerID string `runc_argument:"container_id"`
 }
 
-func (s Start) Subcommand() string { return "start" }
-func (s Start) Groups() []string   { return []string{"global", "container_id"} }
+func (Start) Slots() Slot {
+	return Group{
+		Ordered: []Slot{
+			FlagGroup{"global"},
+			Subcommand{Value: "start"},
+			Argument{Name: "container_id"},
+		},
+	}
+}
 
 // ------------------------------------------------------------
 // delete
@@ -193,8 +248,18 @@ type Delete struct {
 	ContainerID string `runc_argument:"container_id"`
 }
 
-func (d Delete) Subcommand() string { return "delete" }
-func (d Delete) Groups() []string   { return []string{"global", "common", "container_id"} }
+func (Delete) Slots() Slot {
+	return Group{
+		Unordered: []Slot{
+			FlagGroup{"common"},
+		},
+		Ordered: []Slot{
+			FlagGroup{"global"},
+			Subcommand{Value: "delete"},
+			Argument{Name: "container_id"},
+		},
+	}
+}
 
 // ------------------------------------------------------------
 // pause
@@ -206,8 +271,15 @@ type Pause struct {
 	ContainerID string `runc_argument:"container_id"`
 }
 
-func (p Pause) Subcommand() string { return "pause" }
-func (p Pause) Groups() []string   { return []string{"global", "container_id"} }
+func (Pause) Slots() Slot {
+	return Group{
+		Ordered: []Slot{
+			FlagGroup{"global"},
+			Subcommand{Value: "pause"},
+			Argument{Name: "container_id"},
+		},
+	}
+}
 
 // ------------------------------------------------------------
 // resume
@@ -219,8 +291,15 @@ type Resume struct {
 	ContainerID string `runc_argument:"container_id"`
 }
 
-func (r Resume) Subcommand() string { return "resume" }
-func (r Resume) Groups() []string   { return []string{"global", "container_id"} }
+func (Resume) Slots() Slot {
+	return Group{
+		Ordered: []Slot{
+			FlagGroup{"global"},
+			Subcommand{Value: "resume"},
+			Argument{Name: "container_id"},
+		},
+	}
+}
 
 // ------------------------------------------------------------
 // kill
@@ -234,8 +313,19 @@ type Kill struct {
 	Signal      string `runc_argument:"signal"` // optional; defaults to SIGTERM if empty
 }
 
-func (k Kill) Subcommand() string { return "kill" }
-func (k Kill) Groups() []string   { return []string{"global", "common", "container_id", "signal"} }
+func (Kill) Slots() Slot {
+	return Group{
+		Unordered: []Slot{
+			FlagGroup{Name: "common"},
+		},
+		Ordered: []Slot{
+			FlagGroup{Name: "global"},
+			Subcommand{Value: "pause"},
+			Argument{Name: "container_id"},
+			Argument{Name: "signal"},
+		},
+	}
+}
 
 // ------------------------------------------------------------
 // list
@@ -248,8 +338,17 @@ type List struct {
 	Quiet bool `runc_flag:"--quiet" runc_flag_alternatives:"-q" runc_group:"output"`
 }
 
-func (l List) Subcommand() string { return "list" }
-func (l List) Groups() []string   { return []string{"global", "output"} }
+func (List) Slots() Slot {
+	return Group{
+		Unordered: []Slot{
+			FlagGroup{Name: "output"},
+		},
+		Ordered: []Slot{
+			FlagGroup{Name: "global"},
+			Subcommand{Value: "list"},
+		},
+	}
+}
 
 // ------------------------------------------------------------
 // ps
@@ -264,8 +363,19 @@ type Ps struct {
 	PsArgs      []string `runc_argument:"ps_args"` // forwarded to ps(1)
 }
 
-func (p Ps) Subcommand() string { return "ps" }
-func (p Ps) Groups() []string   { return []string{"global", "output", "container_id", "ps_args"} }
+func (Ps) Slots() Slot {
+	return Group{
+		Unordered: []Slot{
+			FlagGroup{Name: "output"},
+		},
+		Ordered: []Slot{
+			FlagGroup{Name: "global"},
+			Subcommand{Value: "ps"},
+			Argument{Name: "container_id"},
+			Arguments{Name: "ps_args"},
+		},
+	}
+}
 
 // ------------------------------------------------------------
 // state
@@ -277,8 +387,15 @@ type State struct {
 	ContainerID string `runc_argument:"container_id"`
 }
 
-func (s State) Subcommand() string { return "state" }
-func (s State) Groups() []string   { return []string{"global", "container_id"} }
+func (State) Slots() Slot {
+	return Group{
+		Ordered: []Slot{
+			FlagGroup{"global"},
+			Subcommand{Value: "state"},
+			Argument{Name: "container_id"},
+		},
+	}
+}
 
 // ------------------------------------------------------------
 // events
@@ -292,8 +409,18 @@ type Events struct {
 	ContainerID string `runc_argument:"container_id"`
 }
 
-func (e Events) Subcommand() string { return "events" }
-func (e Events) Groups() []string   { return []string{"global", "events", "container_id"} }
+func (Events) Slots() Slot {
+	return Group{
+		Unordered: []Slot{
+			FlagGroup{Name: "events"},
+		},
+		Ordered: []Slot{
+			FlagGroup{Name: "global"},
+			Subcommand{Value: "events"},
+			Arguments{Name: "container_id"},
+		},
+	}
+}
 
 // ------------------------------------------------------------
 // exec
@@ -327,10 +454,25 @@ type Exec struct {
 	Args        []string `runc_argument:"args"`
 }
 
-func (e Exec) Subcommand() string { return "exec" }
-func (e Exec) Groups() []string {
-	// Insert "--" as a literal group between container_id and command.
-	return []string{"global", "console", "lifecycle", "runtime", "process", "security", "cgroups", "container_id", "--", "command", "args"}
+func (Exec) Slots() Slot {
+	return Group{
+		Unordered: []Slot{
+			FlagGroup{"console"},
+			FlagGroup{"lifecycle"},
+			FlagGroup{"runtime"},
+			FlagGroup{"process"},
+			FlagGroup{"security"},
+			FlagGroup{"cgroups"},
+		},
+		Ordered: []Slot{
+			FlagGroup{"global"},
+			Subcommand{Value: "exec"},
+			Argument{Name: "container_id"},
+			Literal{Value: "--"},
+			Argument{Name: "command"},
+			Arguments{Name: "args"},
+		},
+	}
 }
 
 // ------------------------------------------------------------
@@ -344,8 +486,18 @@ type Spec struct {
 	Rootless bool `runc_flag:"--rootless" runc_group:"spec"`
 }
 
-func (s Spec) Subcommand() string { return "spec" }
-func (s Spec) Groups() []string   { return []string{"global", "bundle", "spec"} }
+func (Spec) Slots() Slot {
+	return Group{
+		Unordered: []Slot{
+			FlagGroup{Name: "bundle"},
+			FlagGroup{Name: "spec"},
+		},
+		Ordered: []Slot{
+			FlagGroup{Name: "global"},
+			Subcommand{Value: "spec"},
+		},
+	}
+}
 
 // ------------------------------------------------------------
 // update
@@ -374,9 +526,21 @@ type Update struct {
 	BlkioWeight *uint16 `runc_flag:"--blkio-weight" runc_group:"io"`
 }
 
-func (u Update) Subcommand() string { return "update" }
-func (u Update) Groups() []string {
-	return []string{"global", "container_id", "mode", "cpu", "memory", "pids", "io"}
+func (Update) Slots() Slot {
+	return Group{
+		Unordered: []Slot{
+			FlagGroup{Name: "mode"},
+			FlagGroup{Name: "cpu"},
+			FlagGroup{Name: "memory"},
+			FlagGroup{Name: "pids"},
+			FlagGroup{Name: "io"},
+		},
+		Ordered: []Slot{
+			FlagGroup{Name: "global"},
+			Subcommand{Value: "update"},
+			Argument{Name: "container_id"},
+		},
+	}
 }
 
 // ------------------------------------------------------------
@@ -390,3 +554,12 @@ type Features struct {
 
 func (f Features) Subcommand() string { return "features" }
 func (f Features) Groups() []string   { return []string{"global"} }
+
+func (Features) Slots() Slot {
+	return Group{
+		Ordered: []Slot{
+			FlagGroup{Name: "global"},
+			Subcommand{Value: "features"},
+		},
+	}
+}
