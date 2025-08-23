@@ -30,6 +30,26 @@ func logDelegatecLogs(t *testing.T, ctx context.Context, cont tc.Container) {
 	t.Logf("--- delegatec.log ---\n%s\n--------------------", string(out))
 }
 
+func logRuncLogs(t *testing.T, ctx context.Context, cont tc.Container) {
+	t.Helper()
+	cmd := []string{"sh", "-c", "find /var/run/docker/containerd/daemon -name log.json -exec cat {} +"}
+	code, reader, err := cont.Exec(ctx, cmd)
+	if err != nil {
+		t.Logf("failed to read runc log: %v", err)
+		return
+	}
+	if code != 0 {
+		t.Logf("failed to read runc log: exit code %d", code)
+		return
+	}
+	out, _ := io.ReadAll(reader)
+	if len(out) == 0 {
+		t.Log("runc log empty")
+		return
+	}
+	t.Logf("--- runc log ---\n%s\n----------------", string(out))
+}
+
 func TestRuntimeParity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -102,6 +122,7 @@ func TestRuntimeParity(t *testing.T) {
 			if delegatecCode != 0 {
 				logDelegatecLogs(t, ctx, cont)
 			}
+			logRuncLogs(t, ctx, cont)
 			t.Fatalf("mismatch for %q: runc [%d] %q vs %s [%d] %q", cmd, runcCode, string(runcOut), runtime, delegatecCode, string(delegatecOut))
 		}
 		t.Logf("--- case PASSED: %q ---", cmd)
