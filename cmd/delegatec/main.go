@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -142,6 +143,19 @@ type Commands struct {
 	Features   *DelegatecCmd[runc.Features]
 }
 
+func requiresStdin(cmd runc.Command) bool {
+	switch cmd.(type) {
+	case runc.Create, *runc.Create,
+		runc.Run, *runc.Run,
+		runc.Exec, *runc.Exec,
+		runc.Restore, *runc.Restore,
+		runc.Update, *runc.Update:
+		return true
+	default:
+		return false
+	}
+}
+
 func main() {
 	f, err := os.OpenFile("/var/log/delegatec.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
@@ -215,6 +229,17 @@ func main() {
 	stderr := NewLogWriter()
 	execCmd.Stdout = stdout
 	execCmd.Stderr = stderr
+
+	if requiresStdin(cmd) {
+		stdinLog := NewLogWriter()
+		pr, pw := io.Pipe()
+		execCmd.Stdin = pr
+		go func() {
+			io.Copy(io.MultiWriter(pw, stdinLog), os.Stdin)
+			pw.Close()
+			stdinLog.Close()
+		}()
+	}
 
 	if err := execCmd.Run(); err != nil {
 		os.Stdout.Write(stdout.Bytes())
