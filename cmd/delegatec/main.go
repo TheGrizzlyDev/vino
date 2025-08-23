@@ -8,9 +8,103 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"sync"
+	"time"
 
 	"github.com/TheGrizzlyDev/vino/internal/pkg/runc"
 )
+
+type logWriter struct {
+	mu     sync.Mutex
+	buf    bytes.Buffer
+	flushC chan struct{}
+	quit   chan struct{}
+	wg     sync.WaitGroup
+}
+
+// NewLogWriter creates a logWriter that flushes on '\n' or after 1s of inactivity.
+func NewLogWriter() *logWriter {
+	lw := &logWriter{
+		flushC: make(chan struct{}, 1),
+		quit:   make(chan struct{}),
+	}
+	lw.wg.Add(1)
+
+	// Background flusher
+	go func() {
+		defer lw.wg.Done()
+		timer := time.NewTimer(time.Second)
+		defer timer.Stop()
+
+		for {
+			select {
+			case <-lw.flushC:
+				// reset timer on write
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(time.Second)
+			case <-timer.C:
+				lw.flush()
+				timer.Reset(time.Second)
+			case <-lw.quit:
+				lw.flush() // final flush
+				return
+			}
+		}
+	}()
+
+	return lw
+}
+
+func (lw *logWriter) Write(p []byte) (int, error) {
+	lw.mu.Lock()
+	defer lw.mu.Unlock()
+
+	n := len(p)
+	for _, b := range p {
+		if b == '\n' {
+			log.Print(lw.buf.String())
+			lw.buf.Reset()
+		} else {
+			lw.buf.WriteByte(b)
+		}
+	}
+
+	// signal activity (to reset timer)
+	select {
+	case lw.flushC <- struct{}{}:
+	default:
+	}
+	return n, nil
+}
+
+func (lw *logWriter) flush() {
+	lw.mu.Lock()
+	defer lw.mu.Unlock()
+
+	if lw.buf.Len() > 0 {
+		log.Print(lw.buf.String())
+		lw.buf.Reset()
+	}
+}
+
+// Bytes returns a copy of the current unflushed buffer.
+func (lw *logWriter) Bytes() []byte {
+	lw.mu.Lock()
+	defer lw.mu.Unlock()
+	return append([]byte(nil), lw.buf.Bytes()...)
+}
+
+// Close stops the background flusher and flushes remaining data.
+func (lw *logWriter) Close() error {
+	close(lw.quit)
+	lw.wg.Wait()
+	return nil
+}
 
 type DelegatecCmd[T runc.Command] struct {
 	Command      T      `runc_embed:""`
@@ -91,6 +185,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cmds.Update != nil {
+		panic(cmds.Update.Command.ReadFromJSON)
+	}
+
+	go func() {
+		time.Sleep(time.Minute)
+		log.Printf("Failed command: %+v\n", cmd)
+		os.Exit(1)
+	}()
+
 	cli, err := runc.NewDelegatingCliClient(delegatePath)
 	if err != nil {
 		log.Printf("failed to create delegating client: %v\nenv: %v", err, os.Environ())
@@ -107,16 +211,14 @@ func main() {
 
 	log.Printf("executing command: %s %v\n", execCmd.Path, execCmd.Args)
 
-	var stdoutBuf, stderrBuf bytes.Buffer
-	execCmd.Stdout = &stdoutBuf
-	execCmd.Stderr = &stderrBuf
+	stdout := NewLogWriter()
+	stderr := NewLogWriter()
+	execCmd.Stdout = stdout
+	execCmd.Stderr = stderr
 
 	if err := execCmd.Run(); err != nil {
-		log.Printf("runc stdout: %s\n", stdoutBuf.String())
-		log.Printf("runc stderr: %s\n", stderrBuf.String())
-
-		os.Stdout.Write(stdoutBuf.Bytes())
-		os.Stderr.Write(stderrBuf.Bytes())
+		os.Stdout.Write(stdout.Bytes())
+		os.Stderr.Write(stderr.Bytes())
 
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
@@ -126,8 +228,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	os.Stdout.Write(stdoutBuf.Bytes())
-	os.Stderr.Write(stderrBuf.Bytes())
+	os.Stdout.Write(stdout.Bytes())
+	os.Stderr.Write(stderr.Bytes())
 
 	if execCmd.ProcessState != nil {
 		os.Exit(execCmd.ProcessState.ExitCode())
