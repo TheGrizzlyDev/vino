@@ -431,7 +431,7 @@ func TestRuntimeParity(t *testing.T) {
 				}
 				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
 
-				topCmd := []string{"docker", "top", cname}
+				topCmd := []string{"docker", "top", cname, "-o", "pid,comm", "-A"}
 				code, reader, err := cont.Exec(ctx, topCmd, tcexec.Multiplexed())
 				if err != nil {
 					return code, "", err
@@ -439,7 +439,17 @@ func TestRuntimeParity(t *testing.T) {
 				out, err := io.ReadAll(reader)
 				return code, string(out), err
 			},
-			verify: defaultVerify(0),
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				if runcCode != delegatecCode || runcCode != 0 {
+					return fmt.Errorf("unexpected exit code: runc %d delegatec %d", runcCode, delegatecCode)
+				}
+				for name, out := range map[string]string{"runc": runcOut, "delegatec": delegatecOut} {
+					if !strings.Contains(out, "sleep") {
+						return fmt.Errorf("%s output missing 'sleep': %q", name, out)
+					}
+				}
+				return nil
+			},
 		},
 	}
 
