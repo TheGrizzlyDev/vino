@@ -93,7 +93,7 @@ func TestRuntimeParity(t *testing.T) {
 
 		// runc
 		t.Log("executing with runc...")
-		runcCode, runcReader, err := cont.Exec(ctx, []string{"sh", "-c", "docker run --rm --network host " + cmd}, tcexec.Multiplexed())
+		runcCode, runcReader, err := cont.Exec(ctx, []string{"sh", "-c", "docker run -q --rm --network host " + cmd}, tcexec.Multiplexed())
 		if err != nil {
 			t.Fatalf("runc exec failed for %q: %v", cmd, err)
 		}
@@ -106,7 +106,7 @@ func TestRuntimeParity(t *testing.T) {
 
 		// delegatec
 		t.Logf("executing with %s...", runtime)
-		delegatecCode, delegatecReader, err := cont.Exec(ctx, []string{"sh", "-c", "docker run --rm --network host --runtime " + runtime + " " + cmd}, tcexec.Multiplexed())
+		delegatecCode, delegatecReader, err := cont.Exec(ctx, []string{"sh", "-c", "docker run -q --rm --network host --runtime " + runtime + " " + cmd}, tcexec.Multiplexed())
 		if err != nil {
 			t.Fatalf("%s exec failed for %q: %v", runtime, cmd, err)
 		}
