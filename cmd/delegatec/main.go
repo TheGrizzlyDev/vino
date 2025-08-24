@@ -241,10 +241,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if cmds.Update != nil {
-		panic(cmds.Update.Command.ReadFromJSON)
-	}
-
 	go func() {
 		time.Sleep(time.Minute)
 		log.Printf("Failed command: %+v\n", cmd)
