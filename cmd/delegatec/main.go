@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"reflect"
 	"sort"
 	"strconv"
@@ -156,6 +157,19 @@ func requiresStdin(cmd runc.Command) bool {
 	}
 }
 
+func inheritStdin(next runc.Forward) runc.Forward {
+	return func(ctx context.Context, cmd runc.Command) (*exec.Cmd, error) {
+		execCmd, err := next(ctx, cmd)
+		if err != nil {
+			return nil, err
+		}
+		if requiresStdin(cmd) {
+			execCmd.Stdin = os.Stdin
+		}
+		return execCmd, nil
+	}
+}
+
 func inheritedFDs(exclude ...int) ([]int, error) {
 	dir, err := os.Open("/proc/self/fd")
 	if err != nil {
@@ -247,7 +261,7 @@ func main() {
 		os.Exit(1)
 	}()
 
-	cli, err := runc.NewDelegatingCliClient(delegatePath)
+	cli, err := runc.NewDelegatingCliClient(delegatePath, inheritStdin)
 	if err != nil {
 		log.Printf("failed to create delegating client: %v\nenv: %v", err, os.Environ())
 		fmt.Fprintf(os.Stderr, "failed to create delegating client: %v\nenv: %v", err, os.Environ())
