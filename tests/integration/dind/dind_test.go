@@ -4,6 +4,7 @@
 package dind
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/pkg/stdcopy"
 	tc "github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -218,6 +220,66 @@ func TestRuntimeParity(t *testing.T) {
 				}
 				if strings.TrimSpace(runcOut) != "50000 100000" {
 					return fmt.Errorf("unexpected cpu limit: %s", strings.TrimSpace(runcOut))
+				}
+				return nil
+			},
+		},
+		{
+			name: "update limits",
+			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("update-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "tail", "-f", "/dev/null")
+				if code, reader, err := cont.Exec(ctx, runCmd, tcexec.Multiplexed()); err != nil || code != 0 {
+					if err == nil {
+						io.Copy(io.Discard, reader)
+					}
+					return code, "", fmt.Errorf("start container: %w", err)
+				} else {
+					io.Copy(io.Discard, reader)
+				}
+				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+
+				updateCmd := []string{"docker", "update", "--memory", "32m", "--memory-swap", "64m", cname}
+				code, reader, err := cont.Exec(ctx, updateCmd)
+				var stderr bytes.Buffer
+				if reader != nil {
+					stdcopy.StdCopy(io.Discard, &stderr, reader)
+				}
+				if code != 0 {
+					msg := strings.TrimSpace(stderr.String())
+					if err != nil {
+						if msg == "" {
+							return code, "", fmt.Errorf("update container: %w", err)
+						}
+						return code, "", fmt.Errorf("update container: %s: %w", msg, err)
+					}
+					if msg == "" {
+						msg = fmt.Sprintf("exit code %d", code)
+					}
+					return code, "", fmt.Errorf("update container: %s", msg)
+				}
+				if err != nil {
+					return code, "", fmt.Errorf("update container: %w", err)
+				}
+
+				execCmd := []string{"docker", "exec", cname, "cat", "/sys/fs/cgroup/memory.max"}
+				code, reader, err = cont.Exec(ctx, execCmd, tcexec.Multiplexed())
+				if err != nil {
+					return code, "", err
+				}
+				out, err := io.ReadAll(reader)
+				return code, string(out), err
+			},
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+					return err
+				}
+				if strings.TrimSpace(runcOut) != "33554432" {
+					return fmt.Errorf("unexpected memory limit: %s", strings.TrimSpace(runcOut))
 				}
 				return nil
 			},
