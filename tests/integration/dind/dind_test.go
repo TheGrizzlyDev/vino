@@ -111,6 +111,28 @@ func TestRuntimeParity(t *testing.T) {
 		return code, string(out), err
 	}
 
+	execNoOutput := func(ctx context.Context, cont tc.Container, args ...string) (int, error) {
+		code, reader, err := cont.Exec(ctx, args, tcexec.Multiplexed())
+		var stderr bytes.Buffer
+		if reader != nil {
+			stdcopy.StdCopy(io.Discard, &stderr, reader)
+		}
+		if err != nil {
+			if stderr.Len() > 0 {
+				err = fmt.Errorf("%s: %w", strings.TrimSpace(stderr.String()), err)
+			}
+			return code, err
+		}
+		if code != 0 {
+			msg := strings.TrimSpace(stderr.String())
+			if msg == "" {
+				msg = fmt.Sprintf("exit code %d", code)
+			}
+			return code, fmt.Errorf("%s", msg)
+		}
+		return code, nil
+	}
+
 	type caseFn func(context.Context, tc.Container, string) (int, string, error)
 	type verifyFn func(int, string, int, string) error
 	var defaultVerify = func(wantCode int) verifyFn {
@@ -173,13 +195,8 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "tail", "-f", "/dev/null")
-				if code, reader, err := cont.Exec(ctx, runCmd, tcexec.Multiplexed()); err != nil || code != 0 {
-					if err == nil {
-						io.Copy(io.Discard, reader)
-					}
+				if code, err := execNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
-				} else {
-					io.Copy(io.Discard, reader)
 				}
 				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
 				execCmd := []string{"docker", "exec", cname, "sh", "-c", "echo hello"}
@@ -339,33 +356,18 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "sh", "-c", "echo hello > /checkpoint_file; tail -f /dev/null")
-				if code, reader, err := cont.Exec(ctx, runCmd, tcexec.Multiplexed()); err != nil || code != 0 {
-					if err == nil {
-						io.Copy(io.Discard, reader)
-					}
+				if code, err := execNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
-				} else {
-					io.Copy(io.Discard, reader)
 				}
 				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
 				defer cont.Exec(ctx, []string{"docker", "checkpoint", "rm", cname, "ckpt"})
 
-				if code, reader, err := cont.Exec(ctx, []string{"docker", "checkpoint", "create", cname, "ckpt"}, tcexec.Multiplexed()); err != nil || code != 0 {
-					if err == nil {
-						io.Copy(io.Discard, reader)
-					}
+				if code, err := execNoOutput(ctx, cont, "docker", "checkpoint", "create", cname, "ckpt"); err != nil {
 					return code, "", fmt.Errorf("create checkpoint: %w", err)
-				} else {
-					io.Copy(io.Discard, reader)
 				}
 
-				if code, reader, err := cont.Exec(ctx, []string{"docker", "start", "--checkpoint", "ckpt", cname}, tcexec.Multiplexed()); err != nil || code != 0 {
-					if err == nil {
-						io.Copy(io.Discard, reader)
-					}
+				if code, err := execNoOutput(ctx, cont, "docker", "start", "--checkpoint", "ckpt", cname); err != nil {
 					return code, "", fmt.Errorf("start from checkpoint: %w", err)
-				} else {
-					io.Copy(io.Discard, reader)
 				}
 
 				execCmd := []string{"docker", "exec", cname, "cat", "/checkpoint_file"}
@@ -387,32 +389,17 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "sleep", "infinity")
-				if code, reader, err := cont.Exec(ctx, runCmd, tcexec.Multiplexed()); err != nil || code != 0 {
-					if err == nil {
-						io.Copy(io.Discard, reader)
-					}
+				if code, err := execNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
-				} else {
-					io.Copy(io.Discard, reader)
 				}
 				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
 
-				if code, reader, err := cont.Exec(ctx, []string{"docker", "pause", cname}, tcexec.Multiplexed()); err != nil || code != 0 {
-					if err == nil {
-						io.Copy(io.Discard, reader)
-					}
+				if code, err := execNoOutput(ctx, cont, "docker", "pause", cname); err != nil {
 					return code, "", fmt.Errorf("pause container: %w", err)
-				} else {
-					io.Copy(io.Discard, reader)
 				}
 
-				if code, reader, err := cont.Exec(ctx, []string{"docker", "unpause", cname}, tcexec.Multiplexed()); err != nil || code != 0 {
-					if err == nil {
-						io.Copy(io.Discard, reader)
-					}
+				if code, err := execNoOutput(ctx, cont, "docker", "unpause", cname); err != nil {
 					return code, "", fmt.Errorf("unpause container: %w", err)
-				} else {
-					io.Copy(io.Discard, reader)
 				}
 
 				execCmd := []string{"docker", "exec", cname, "sh", "-c", "echo hello"}
