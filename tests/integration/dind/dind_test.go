@@ -163,6 +163,34 @@ func TestRuntimeParity(t *testing.T) {
 			verify: defaultVerify(0),
 		},
 		{
+			name: "exec after run",
+			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("bgtest-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "tail", "-f", "/dev/null")
+				if code, reader, err := cont.Exec(ctx, runCmd, tcexec.Multiplexed()); err != nil || code != 0 {
+					if err == nil {
+						io.Copy(io.Discard, reader)
+					}
+					return code, "", fmt.Errorf("start container: %w", err)
+				} else {
+					io.Copy(io.Discard, reader)
+				}
+				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+				execCmd := []string{"docker", "exec", cname, "sh", "-c", "echo hello"}
+				code, reader, err := cont.Exec(ctx, execCmd, tcexec.Multiplexed())
+				if err != nil {
+					return code, "", err
+				}
+				out, err := io.ReadAll(reader)
+				return code, string(out), err
+			},
+			verify: defaultVerify(0),
+		},
+		{
 			name: "memory limit",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cmd := []string{"-m", "32m", "alpine", "sh", "-c", "cat /sys/fs/cgroup/memory.max"}
