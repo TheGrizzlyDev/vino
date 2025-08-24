@@ -330,6 +330,101 @@ func TestRuntimeParity(t *testing.T) {
 				return nil
 			},
 		},
+		{
+			name: "checkpoint restore",
+			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("ckpt-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "sh", "-c", "echo hello > /checkpoint_file; tail -f /dev/null")
+				if code, reader, err := cont.Exec(ctx, runCmd, tcexec.Multiplexed()); err != nil || code != 0 {
+					if err == nil {
+						io.Copy(io.Discard, reader)
+					}
+					return code, "", fmt.Errorf("start container: %w", err)
+				} else {
+					io.Copy(io.Discard, reader)
+				}
+				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+				defer cont.Exec(ctx, []string{"docker", "checkpoint", "rm", cname, "ckpt"})
+
+				if code, reader, err := cont.Exec(ctx, []string{"docker", "checkpoint", "create", cname, "ckpt"}, tcexec.Multiplexed()); err != nil || code != 0 {
+					if err == nil {
+						io.Copy(io.Discard, reader)
+					}
+					return code, "", fmt.Errorf("create checkpoint: %w", err)
+				} else {
+					io.Copy(io.Discard, reader)
+				}
+
+				if code, reader, err := cont.Exec(ctx, []string{"docker", "start", "--checkpoint", "ckpt", cname}, tcexec.Multiplexed()); err != nil || code != 0 {
+					if err == nil {
+						io.Copy(io.Discard, reader)
+					}
+					return code, "", fmt.Errorf("start from checkpoint: %w", err)
+				} else {
+					io.Copy(io.Discard, reader)
+				}
+
+				execCmd := []string{"docker", "exec", cname, "cat", "/checkpoint_file"}
+				code, reader, err := cont.Exec(ctx, execCmd, tcexec.Multiplexed())
+				if err != nil {
+					return code, "", err
+				}
+				out, err := io.ReadAll(reader)
+				return code, string(out), err
+			},
+			verify: defaultVerify(0),
+		},
+		{
+			name: "pause/unpause",
+			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("pause-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "sleep", "infinity")
+				if code, reader, err := cont.Exec(ctx, runCmd, tcexec.Multiplexed()); err != nil || code != 0 {
+					if err == nil {
+						io.Copy(io.Discard, reader)
+					}
+					return code, "", fmt.Errorf("start container: %w", err)
+				} else {
+					io.Copy(io.Discard, reader)
+				}
+				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+
+				if code, reader, err := cont.Exec(ctx, []string{"docker", "pause", cname}, tcexec.Multiplexed()); err != nil || code != 0 {
+					if err == nil {
+						io.Copy(io.Discard, reader)
+					}
+					return code, "", fmt.Errorf("pause container: %w", err)
+				} else {
+					io.Copy(io.Discard, reader)
+				}
+
+				if code, reader, err := cont.Exec(ctx, []string{"docker", "unpause", cname}, tcexec.Multiplexed()); err != nil || code != 0 {
+					if err == nil {
+						io.Copy(io.Discard, reader)
+					}
+					return code, "", fmt.Errorf("unpause container: %w", err)
+				} else {
+					io.Copy(io.Discard, reader)
+				}
+
+				execCmd := []string{"docker", "exec", cname, "sh", "-c", "echo hello"}
+				code, reader, err := cont.Exec(ctx, execCmd, tcexec.Multiplexed())
+				if err != nil {
+					return code, "", err
+				}
+				out, err := io.ReadAll(reader)
+				return code, string(out), err
+			},
+			verify: defaultVerify(0),
+		},
 	}
 
 	for _, c := range cases {
