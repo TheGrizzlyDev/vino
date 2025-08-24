@@ -154,6 +154,29 @@ func TestRuntimeParity(t *testing.T) {
 		return code, stdout.String(), stderr.String(), nil
 	}
 
+	// requireCheckpointSupport verifies that the host supports container
+	// checkpoint/restore by running `criu check` and `docker checkpoint ls`
+	// on a dummy container. If either command fails or reports unsupported
+	// features, the calling test is skipped. This helps maintainers avoid
+	// spurious failures when the kernel or Docker daemon lacks CRIU support.
+	requireCheckpointSupport := func(t *testing.T, ctx context.Context, cont tc.Container) {
+		t.Helper()
+		if code, out, serr, err := execNoOutput(ctx, cont, "criu", "check"); err != nil || code != 0 || strings.Contains(strings.ToLower(out+serr), "unsupported") {
+			t.Skipf("skipping checkpoint restore: criu check failed (exit %d): %v\nstdout:\n%s\nstderr:\n%s", code, err, out, serr)
+		}
+
+		cname := fmt.Sprintf("ckpt-precheck-%d", time.Now().UnixNano())
+		runCmd := []string{"docker", "run", "-d", "--name", cname, "alpine", "sleep", "infinity"}
+		if code, _, _, err := execNoOutput(ctx, cont, runCmd...); err != nil || code != 0 {
+			t.Skipf("skipping checkpoint restore: failed to start dummy container: %v", err)
+		}
+		defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+
+		if code, out, serr, err := execNoOutput(ctx, cont, "docker", "checkpoint", "ls", cname); err != nil || code != 0 || strings.Contains(strings.ToLower(out+serr), "unsupported") {
+			t.Skipf("skipping checkpoint restore: docker checkpoint ls failed (exit %d): %v\nstdout:\n%s\nstderr:\n%s", code, err, out, serr)
+		}
+	}
+
 	type caseFn func(context.Context, tc.Container, string) (int, string, error)
 	type verifyFn func(int, string, int, string) error
 	var defaultVerify = func(wantCode int) verifyFn {
@@ -168,9 +191,10 @@ func TestRuntimeParity(t *testing.T) {
 		}
 	}
 	cases := []struct {
-		name   string
-		fn     caseFn
-		verify verifyFn
+		name    string
+		fn      caseFn
+		verify  verifyFn
+		pretest func(*testing.T, context.Context, tc.Container)
 	}{
 		{
 			name: "echo",
@@ -370,6 +394,9 @@ func TestRuntimeParity(t *testing.T) {
 		},
 		{
 			name: "checkpoint restore",
+			pretest: func(t *testing.T, ctx context.Context, cont tc.Container) {
+				requireCheckpointSupport(t, ctx, cont)
+			},
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := fmt.Sprintf("ckpt-%d", time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
@@ -479,6 +506,9 @@ func TestRuntimeParity(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			if c.pretest != nil {
+				c.pretest(t, ctx, cont)
+			}
 			runcCode, runcOut, err := c.fn(ctx, cont, "runc")
 			if err != nil {
 				t.Fatalf("runc exec failed: %v", err)
