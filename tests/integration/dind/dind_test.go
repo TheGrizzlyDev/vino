@@ -88,7 +88,12 @@ func TestRuntimeParity(t *testing.T) {
 		_ = cont.Terminate(ctx)
 	}()
 
-	runCase := func(runtime, cmd string) {
+	// create a file to verify volume mounts
+	if code, _, err := cont.Exec(ctx, []string{"sh", "-c", "echo module test > /go.mod"}); err != nil || code != 0 {
+		t.Fatalf("failed to create go.mod in container: %v (exit code %d)", err, code)
+	}
+
+	runCase := func(runtime, cmd string, wantCode int) {
 		t.Logf("--- running case: %q ---", cmd)
 
 		// runc
@@ -125,15 +130,21 @@ func TestRuntimeParity(t *testing.T) {
 			logRuncLogs(t, ctx, cont)
 			t.Fatalf("mismatch for %q: runc [%d] %q vs %s [%d] %q", cmd, runcCode, string(runcOut), runtime, delegatecCode, string(delegatecOut))
 		}
+		if runcCode != wantCode {
+			t.Fatalf("unexpected exit code for %q: runc [%d] vs %s [%d], want %d", cmd, runcCode, runtime, delegatecCode, wantCode)
+		}
 		t.Logf("--- case PASSED: %q ---", cmd)
 	}
-
-	cases := []string{
-		"alpine echo hello",
-		"alpine false",
-		"-e FOO=bar alpine sh -c 'echo $FOO'",
+	cases := []struct {
+		cmd      string
+		wantCode int
+	}{
+		{"alpine echo hello", 0},
+		{"alpine false", 1},
+		{"-e FOO=bar alpine sh -c 'echo $FOO'", 0},
+		{"-v $(pwd):/data alpine sh -c 'test -f /data/go.mod'", 0},
 	}
-	for _, cmd := range cases {
-		runCase("delegatec", cmd)
+	for _, c := range cases {
+		runCase("delegatec", c.cmd, c.wantCode)
 	}
 }
