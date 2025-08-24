@@ -179,6 +179,22 @@ func TestRuntimeParity(t *testing.T) {
 			},
 		},
 		{
+			name: "cpu limit",
+			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cmd := []string{"--cpus", "0.5", "alpine", "sh", "-c", "cat /sys/fs/cgroup/cpu.max"}
+				return runDocker(ctx, cont, runtime, cmd...)
+			},
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+					return err
+				}
+				if strings.TrimSpace(runcOut) != "50000 100000" {
+					return fmt.Errorf("unexpected cpu limit: %s", strings.TrimSpace(runcOut))
+				}
+				return nil
+			},
+		},
+		{
 			name: "nginx port mapping",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := fmt.Sprintf("web-%d", time.Now().UnixNano())
