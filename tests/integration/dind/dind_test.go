@@ -19,41 +19,6 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-func logDelegatecLogs(t *testing.T, ctx context.Context, cont tc.Container) {
-	t.Helper()
-	code, reader, err := cont.Exec(ctx, []string{"cat", "/var/log/delegatec.log"})
-	if err != nil {
-		t.Logf("failed to read delegatec.log: %v", err)
-		return
-	}
-	if code != 0 {
-		t.Logf("failed to read delegatec.log: exit code %d", code)
-		return
-	}
-	out, _ := io.ReadAll(reader)
-	t.Logf("--- delegatec.log ---\n%s\n--------------------", string(out))
-}
-
-func logRuncLogs(t *testing.T, ctx context.Context, cont tc.Container) {
-	t.Helper()
-	cmd := []string{"sh", "-c", "find /var/run/docker/containerd/daemon -name log.json -exec cat {} +"}
-	code, reader, err := cont.Exec(ctx, cmd)
-	if err != nil {
-		t.Logf("failed to read runc log: %v", err)
-		return
-	}
-	if code != 0 {
-		t.Logf("failed to read runc log: exit code %d", code)
-		return
-	}
-	out, _ := io.ReadAll(reader)
-	if len(out) == 0 {
-		t.Log("runc log empty")
-		return
-	}
-	t.Logf("--- runc log ---\n%s\n----------------", string(out))
-}
-
 func logCriuCheck(t *testing.T, ctx context.Context, cont tc.Container) {
 	t.Helper()
 	code, reader, err := cont.Exec(ctx, []string{"criu", "check"}, tcexec.Multiplexed())
@@ -111,49 +76,6 @@ func TestRuntimeParity(t *testing.T) {
 		t.Fatalf("failed to create go.mod in container: %v (exit code %d)", err, code)
 	}
 
-	runDocker := func(ctx context.Context, cont tc.Container, runtime string, args ...string) (int, string, error) {
-		cmd := []string{"docker", "run", "--rm", "-q"}
-		if runtime != "" {
-			cmd = append(cmd, "--runtime", runtime)
-		}
-		cmd = append(cmd, args...)
-		code, reader, err := cont.Exec(ctx, cmd, tcexec.Multiplexed())
-		if err != nil {
-			return code, "", err
-		}
-		out, err := io.ReadAll(reader)
-		return code, string(out), err
-	}
-
-	execNoOutput := func(ctx context.Context, cont tc.Container, args ...string) (int, string, string, error) {
-		code, reader, err := cont.Exec(ctx, args, tcexec.Multiplexed())
-		var stdout, stderr bytes.Buffer
-		if reader != nil {
-			stdcopy.StdCopy(&stdout, &stderr, reader)
-		}
-		if err != nil {
-			msg := strings.TrimSpace(stderr.String())
-			if msg == "" {
-				msg = strings.TrimSpace(stdout.String())
-			}
-			if msg != "" {
-				err = fmt.Errorf("%s: %w", msg, err)
-			}
-			return code, stdout.String(), stderr.String(), err
-		}
-		if code != 0 {
-			msg := strings.TrimSpace(stderr.String())
-			if msg == "" {
-				msg = strings.TrimSpace(stdout.String())
-			}
-			if msg == "" {
-				msg = fmt.Sprintf("exit code %d", code)
-			}
-			return code, stdout.String(), stderr.String(), fmt.Errorf("%s", msg)
-		}
-		return code, stdout.String(), stderr.String(), nil
-	}
-
 	// requireCheckpointSupport verifies that the host supports container
 	// checkpoint/restore by running `criu check` and `docker checkpoint ls`
 	// on a dummy container. If either command fails or reports unsupported
@@ -161,18 +83,18 @@ func TestRuntimeParity(t *testing.T) {
 	// spurious failures when the kernel or Docker daemon lacks CRIU support.
 	requireCheckpointSupport := func(t *testing.T, ctx context.Context, cont tc.Container) {
 		t.Helper()
-		if code, out, serr, err := execNoOutput(ctx, cont, "criu", "check"); err != nil || code != 0 || strings.Contains(strings.ToLower(out+serr), "unsupported") {
+		if code, out, serr, err := ExecNoOutput(ctx, cont, "criu", "check"); err != nil || code != 0 || strings.Contains(strings.ToLower(out+serr), "unsupported") {
 			t.Skipf("skipping checkpoint restore: criu check failed (exit %d): %v\nstdout:\n%s\nstderr:\n%s", code, err, out, serr)
 		}
 
 		cname := fmt.Sprintf("ckpt-precheck-%d", time.Now().UnixNano())
 		runCmd := []string{"docker", "run", "-d", "--name", cname, "alpine", "sleep", "infinity"}
-		if code, _, _, err := execNoOutput(ctx, cont, runCmd...); err != nil || code != 0 {
+		if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil || code != 0 {
 			t.Skipf("skipping checkpoint restore: failed to start dummy container: %v", err)
 		}
 		defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
 
-		if code, out, serr, err := execNoOutput(ctx, cont, "docker", "checkpoint", "ls", cname); err != nil || code != 0 || strings.Contains(strings.ToLower(out+serr), "unsupported") {
+		if code, out, serr, err := ExecNoOutput(ctx, cont, "docker", "checkpoint", "ls", cname); err != nil || code != 0 || strings.Contains(strings.ToLower(out+serr), "unsupported") {
 			t.Skipf("skipping checkpoint restore: docker checkpoint ls failed (exit %d): %v\nstdout:\n%s\nstderr:\n%s", code, err, out, serr)
 		}
 	}
@@ -199,35 +121,35 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "echo",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return runDocker(ctx, cont, runtime, "alpine", "echo", "hello")
+				return RunDocker(ctx, cont, runtime, "alpine", "echo", "hello")
 			},
 			verify: defaultVerify(0),
 		},
 		{
 			name: "false",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return runDocker(ctx, cont, runtime, "alpine", "false")
+				return RunDocker(ctx, cont, runtime, "alpine", "false")
 			},
 			verify: defaultVerify(1),
 		},
 		{
 			name: "env",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return runDocker(ctx, cont, runtime, "-e", "FOO=bar", "alpine", "sh", "-c", "echo $FOO")
+				return RunDocker(ctx, cont, runtime, "-e", "FOO=bar", "alpine", "sh", "-c", "echo $FOO")
 			},
 			verify: defaultVerify(0),
 		},
 		{
 			name: "volume",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return runDocker(ctx, cont, runtime, "-v", "/:/data", "alpine", "sh", "-c", "test -f /data/go.mod")
+				return RunDocker(ctx, cont, runtime, "-v", "/:/data", "alpine", "sh", "-c", "test -f /data/go.mod")
 			},
 			verify: defaultVerify(0),
 		},
 		{
 			name: "workdir",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return runDocker(ctx, cont, runtime, "-w", "/tmp", "alpine", "pwd")
+				return RunDocker(ctx, cont, runtime, "-w", "/tmp", "alpine", "pwd")
 			},
 			verify: defaultVerify(0),
 		},
@@ -240,7 +162,7 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "tail", "-f", "/dev/null")
-				if code, _, _, err := execNoOutput(ctx, cont, runCmd...); err != nil {
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
 				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
@@ -258,7 +180,7 @@ func TestRuntimeParity(t *testing.T) {
 			name: "memory limit",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cmd := []string{"-m", "32m", "alpine", "sh", "-c", "cat /sys/fs/cgroup/memory.max"}
-				return runDocker(ctx, cont, runtime, cmd...)
+				return RunDocker(ctx, cont, runtime, cmd...)
 			},
 			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
 				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
@@ -274,7 +196,7 @@ func TestRuntimeParity(t *testing.T) {
 			name: "cpu limit",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cmd := []string{"--cpus", "0.5", "alpine", "sh", "-c", "cat /sys/fs/cgroup/cpu.max"}
-				return runDocker(ctx, cont, runtime, cmd...)
+				return RunDocker(ctx, cont, runtime, cmd...)
 			},
 			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
 				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
@@ -350,7 +272,7 @@ func TestRuntimeParity(t *testing.T) {
 			name: "nginx port mapping",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := fmt.Sprintf("web-%d", time.Now().UnixNano())
-				if code, _, err := runDocker(ctx, cont, runtime, "-d", "--name", cname, "-p", "8080:80", "nginx"); err != nil || code != 0 {
+				if code, _, err := RunDocker(ctx, cont, runtime, "-d", "--name", cname, "-p", "8080:80", "nginx"); err != nil || code != 0 {
 					return code, "", fmt.Errorf("start nginx: %w", err)
 				}
 				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
@@ -368,7 +290,7 @@ func TestRuntimeParity(t *testing.T) {
 			name: "user and capabilities",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cmd := []string{"--user", "1000:1000", "alpine", "sh", "-c", "id -u; id -g; cat /proc/self/status | grep CapEff; ping -c 1 127.0.0.1"}
-				return runDocker(ctx, cont, runtime, cmd...)
+				return RunDocker(ctx, cont, runtime, cmd...)
 			},
 			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
 				verifyOut := func(runtime, out string) error {
@@ -404,20 +326,20 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "sh", "-c", "echo hello > /checkpoint_file; tail -f /dev/null")
-				if code, _, _, err := execNoOutput(ctx, cont, runCmd...); err != nil {
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
 				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
 				defer cont.Exec(ctx, []string{"docker", "checkpoint", "rm", cname, "ckpt"})
 
-				code, out, serr, err := execNoOutput(ctx, cont, "docker", "checkpoint", "create", "--debug", cname, "ckpt")
+				code, out, serr, err := ExecNoOutput(ctx, cont, "docker", "checkpoint", "create", "--debug", cname, "ckpt")
 				t.Logf("docker checkpoint create stdout:\n%s", out)
 				t.Logf("docker checkpoint create stderr:\n%s", serr)
 				if err != nil {
 					return code, "", fmt.Errorf("create checkpoint: %w", err)
 				}
 
-				if code, _, _, err := execNoOutput(ctx, cont, "docker", "start", "--checkpoint", "ckpt", cname); err != nil {
+				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "start", "--checkpoint", "ckpt", cname); err != nil {
 					return code, "", fmt.Errorf("start from checkpoint: %w", err)
 				}
 
@@ -440,16 +362,16 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "sleep", "infinity")
-				if code, _, _, err := execNoOutput(ctx, cont, runCmd...); err != nil {
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
 				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
 
-				if code, _, _, err := execNoOutput(ctx, cont, "docker", "pause", cname); err != nil {
+				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "pause", cname); err != nil {
 					return code, "", fmt.Errorf("pause container: %w", err)
 				}
 
-				if code, _, _, err := execNoOutput(ctx, cont, "docker", "unpause", cname); err != nil {
+				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "unpause", cname); err != nil {
 					return code, "", fmt.Errorf("unpause container: %w", err)
 				}
 
@@ -524,8 +446,8 @@ func TestRuntimeParity(t *testing.T) {
 			t.Logf("delegatec output:\n%s", delegatecOut)
 
 			if err := c.verify(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
-				logDelegatecLogs(t, ctx, cont)
-				logRuncLogs(t, ctx, cont)
+				LogDelegatecLogs(t, ctx, cont)
+				LogRuncLogs(t, ctx, cont)
 				logCriuCheck(t, ctx, cont)
 				t.Fatal(err)
 			}
