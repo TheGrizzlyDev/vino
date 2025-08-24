@@ -272,17 +272,39 @@ func TestRuntimeParity(t *testing.T) {
 			name: "nginx port mapping",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := fmt.Sprintf("web-%d", time.Now().UnixNano())
-				if code, _, err := RunDocker(ctx, cont, runtime, "-d", "--name", cname, "-p", "8080:80", "nginx"); err != nil || code != 0 {
+				code, _, err := RunDocker(ctx, cont, runtime, "-d", "--name", cname, "-p", "8080:80", "nginx")
+				if err != nil {
 					return code, "", fmt.Errorf("start nginx: %w", err)
 				}
-				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
-				time.Sleep(1 * time.Second)
-				code, reader, err := cont.Exec(ctx, []string{"curl", "-fsSL", "http://localhost:8080"}, tcexec.Multiplexed())
-				if err != nil {
-					return code, "", err
+				if code != 0 {
+					return code, "", fmt.Errorf("start nginx: exit code %d", code)
 				}
-				data, err := io.ReadAll(reader)
-				return code, string(data), err
+				cleanup := func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) }
+				t.Cleanup(cleanup)
+
+				pollCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+
+				for {
+					code, reader, err := cont.Exec(pollCtx, []string{"curl", "-fsSL", "--max-time", "1", "http://localhost:8080"}, tcexec.Multiplexed())
+					if err == nil && code == 0 {
+						data, err := io.ReadAll(reader)
+						cleanup()
+						return code, string(data), err
+					}
+					if err == nil {
+						io.Copy(io.Discard, reader)
+					}
+					select {
+					case <-pollCtx.Done():
+						if err == nil {
+							err = pollCtx.Err()
+						}
+						cleanup()
+						return code, "", err
+					case <-time.After(100 * time.Millisecond):
+					}
+				}
 			},
 			verify: defaultVerify(0),
 		},
