@@ -5,6 +5,7 @@ package dind
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"path/filepath"
 	"testing"
@@ -93,59 +94,107 @@ func TestRuntimeParity(t *testing.T) {
 		t.Fatalf("failed to create go.mod in container: %v (exit code %d)", err, code)
 	}
 
-	runCase := func(runtime, cmd string, wantCode int) {
-		t.Logf("--- running case: %q ---", cmd)
-
-		// runc
-		t.Log("executing with runc...")
-		runcCode, runcReader, err := cont.Exec(ctx, []string{"sh", "-c", "docker run -q --rm " + cmd}, tcexec.Multiplexed())
+	runDocker := func(ctx context.Context, cont tc.Container, runtime string, args ...string) (int, string, error) {
+		cmd := []string{"docker", "run", "--rm", "-q"}
+		if runtime != "" {
+			cmd = append(cmd, "--runtime", runtime)
+		}
+		cmd = append(cmd, args...)
+		code, reader, err := cont.Exec(ctx, cmd, tcexec.Multiplexed())
 		if err != nil {
-			t.Fatalf("runc exec failed for %q: %v", cmd, err)
+			return code, "", err
 		}
-		runcOut, err := io.ReadAll(runcReader)
-		if err != nil {
-			t.Fatalf("read runc output: %v", err)
-		}
-		t.Logf("runc exited with %d", runcCode)
-		t.Logf("runc output:\n%s", string(runcOut))
-
-		// delegatec
-		t.Logf("executing with %s...", runtime)
-		delegatecCode, delegatecReader, err := cont.Exec(ctx, []string{"sh", "-c", "docker run -q --rm --runtime " + runtime + " " + cmd}, tcexec.Multiplexed())
-		if err != nil {
-			t.Fatalf("%s exec failed for %q: %v", runtime, cmd, err)
-		}
-		delegatecOut, err := io.ReadAll(delegatecReader)
-		if err != nil {
-			t.Fatalf("read %s output: %v", runtime, err)
-		}
-		t.Logf("%s exited with %d", runtime, delegatecCode)
-		t.Logf("%s output:\n%s", runtime, string(delegatecOut))
-
-		// comparison
-		if runcCode != delegatecCode || string(runcOut) != string(delegatecOut) {
-			if delegatecCode != 0 {
-				logDelegatecLogs(t, ctx, cont)
-			}
-			logRuncLogs(t, ctx, cont)
-			t.Fatalf("mismatch for %q: runc [%d] %q vs %s [%d] %q", cmd, runcCode, string(runcOut), runtime, delegatecCode, string(delegatecOut))
-		}
-		if runcCode != wantCode {
-			t.Fatalf("unexpected exit code for %q: runc [%d] vs %s [%d], want %d", cmd, runcCode, runtime, delegatecCode, wantCode)
-		}
-		t.Logf("--- case PASSED: %q ---", cmd)
+		out, err := io.ReadAll(reader)
+		return code, string(out), err
 	}
+
+	type caseFn func(context.Context, tc.Container, string) (int, string, error)
 	cases := []struct {
-		cmd      string
+		name     string
+		fn       caseFn
 		wantCode int
 	}{
-		{"alpine echo hello", 0},
-		{"alpine false", 1},
-		{"-e FOO=bar alpine sh -c 'echo $FOO'", 0},
-		{"-v $(pwd):/data alpine sh -c 'test -f /data/go.mod'", 0},
-		{"-w /tmp alpine pwd", 0},
+		{
+			name: "echo",
+			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				return runDocker(ctx, cont, runtime, "alpine", "echo", "hello")
+			},
+			wantCode: 0,
+		},
+		{
+			name: "false",
+			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				return runDocker(ctx, cont, runtime, "alpine", "false")
+			},
+			wantCode: 1,
+		},
+		{
+			name: "env",
+			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				return runDocker(ctx, cont, runtime, "-e", "FOO=bar", "alpine", "sh", "-c", "echo $FOO")
+			},
+			wantCode: 0,
+		},
+		{
+			name: "volume",
+			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				return runDocker(ctx, cont, runtime, "-v", "/:/data", "alpine", "sh", "-c", "test -f /data/go.mod")
+			},
+			wantCode: 0,
+		},
+		{
+			name: "workdir",
+			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				return runDocker(ctx, cont, runtime, "-w", "/tmp", "alpine", "pwd")
+			},
+			wantCode: 0,
+		},
+		{
+			name: "nginx port mapping",
+			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("web-%d", time.Now().UnixNano())
+				if code, _, err := runDocker(ctx, cont, runtime, "-d", "--name", cname, "-p", "8080:80", "nginx"); err != nil || code != 0 {
+					return code, "", fmt.Errorf("start nginx: %w", err)
+				}
+				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+				time.Sleep(1 * time.Second)
+				code, reader, err := cont.Exec(ctx, []string{"curl", "-fsSL", "http://localhost:8080"}, tcexec.Multiplexed())
+				if err != nil {
+					return code, "", err
+				}
+				out, err := io.ReadAll(reader)
+				return code, string(out), err
+			},
+			wantCode: 0,
+		},
 	}
+
 	for _, c := range cases {
-		runCase("delegatec", c.cmd, c.wantCode)
+		t.Run(c.name, func(t *testing.T) {
+			runcCode, runcOut, err := c.fn(ctx, cont, "runc")
+			if err != nil {
+				t.Fatalf("runc exec failed: %v", err)
+			}
+			t.Logf("runc exited with %d", runcCode)
+			t.Logf("runc output:\n%s", runcOut)
+
+			delegatecCode, delegatecOut, err := c.fn(ctx, cont, "delegatec")
+			if err != nil {
+				t.Fatalf("delegatec exec failed: %v", err)
+			}
+			t.Logf("delegatec exited with %d", delegatecCode)
+			t.Logf("delegatec output:\n%s", delegatecOut)
+
+			if runcCode != delegatecCode || runcOut != delegatecOut {
+				if delegatecCode != 0 {
+					logDelegatecLogs(t, ctx, cont)
+				}
+				logRuncLogs(t, ctx, cont)
+				t.Fatalf("mismatch: runc [%d] %q vs delegatec [%d] %q", runcCode, runcOut, delegatecCode, delegatecOut)
+			}
+			if runcCode != c.wantCode {
+				t.Fatalf("unexpected exit code: got %d want %d", runcCode, c.wantCode)
+			}
+		})
 	}
 }
