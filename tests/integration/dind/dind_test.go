@@ -128,6 +128,12 @@ func TestRuntimeParity(t *testing.T) {
 		t.Logf("--- case PASSED: %q ---", cmd)
 	}
 
-	runCase("delegatec", "alpine echo hello")
-	runCase("delegatec", "alpine false")
+	cases := []string{
+		"alpine echo hello",
+		"alpine false",
+		"-e FOO=bar alpine sh -c 'echo $FOO'",
+	}
+	for _, cmd := range cases {
+		runCase("delegatec", cmd)
+	}
 }
