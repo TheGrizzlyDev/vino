@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
-	"os/exec"
 	"reflect"
 	"sort"
 	"strconv"
@@ -274,49 +272,49 @@ func main() {
 
 	log.Printf("executing command: %s %v\n", execCmd.Path, execCmd.Args)
 
-	stdout := NewLogWriter()
-	stderr := NewLogWriter()
-	execCmd.Stdout = stdout
-	execCmd.Stderr = stderr
-
-	if requiresStdin(cmd) {
-		stdinLog := NewLogWriter()
-		pr, pw := io.Pipe()
-		execCmd.Stdin = pr
-		go func() {
-			io.Copy(io.MultiWriter(pw, stdinLog), os.Stdin)
-			pw.Close()
-			stdinLog.Close()
-		}()
+	maxFD := 2
+	for _, fd := range fds {
+		if fd > maxFD {
+			maxFD = fd
+		}
+	}
+	files := make([]*os.File, maxFD+1)
+	files[0] = os.Stdin
+	files[1] = os.Stdout
+	files[2] = os.Stderr
+	for _, fd := range fds {
+		files[fd] = os.NewFile(uintptr(fd), "")
 	}
 
-	if err := execCmd.Start(); err != nil {
-		os.Stdout.Write(stdout.Bytes())
-		os.Stderr.Write(stderr.Bytes())
+	attr := &os.ProcAttr{
+		Files: files,
+		Dir:   execCmd.Dir,
+		Env:   execCmd.Env,
+	}
+	if attr.Env == nil {
+		attr.Env = os.Environ()
+	}
+	if execCmd.SysProcAttr != nil {
+		attr.Sys = execCmd.SysProcAttr
+	}
 
+	proc, err := os.StartProcess(execCmd.Path, execCmd.Args, attr)
+	if err != nil {
 		log.Printf("command start failed: %v\nenv: %v", err, os.Environ())
 		fmt.Fprintf(os.Stderr, "command start failed: %v\nenv: %v", err, os.Environ())
 		os.Exit(1)
 	}
 	for _, fd := range fds {
-		unix.Close(fd)
+		files[fd].Close()
 	}
-	if err := execCmd.Wait(); err != nil {
-		os.Stdout.Write(stdout.Bytes())
-		os.Stderr.Write(stderr.Bytes())
 
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
-		}
-		log.Printf("command execution failed: %v\nenv: %v", err, os.Environ())
-		fmt.Fprintf(os.Stderr, "command execution failed: %v\nenv: %v", err, os.Environ())
+	state, err := proc.Wait()
+	if err != nil {
+		log.Printf("command wait failed: %v\nenv: %v", err, os.Environ())
+		fmt.Fprintf(os.Stderr, "command wait failed: %v\nenv: %v", err, os.Environ())
 		os.Exit(1)
 	}
-
-	os.Stdout.Write(stdout.Bytes())
-	os.Stderr.Write(stderr.Bytes())
-
-	if execCmd.ProcessState != nil {
-		os.Exit(execCmd.ProcessState.ExitCode())
+	if code := state.ExitCode(); code != 0 {
+		os.Exit(code)
 	}
 }
