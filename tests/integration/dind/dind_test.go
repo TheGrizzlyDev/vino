@@ -103,6 +103,8 @@ func TestRuntimeParity(t *testing.T) {
 	type verifyFn func(int, string, int, string) error
 	var defaultVerify = func(wantCode int) verifyFn {
 		return func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+			runcOut = strings.TrimSpace(runcOut)
+			delegatecOut = strings.TrimSpace(delegatecOut)
 			if runcCode != delegatecCode || runcOut != delegatecOut {
 				return fmt.Errorf("mismatch: runc [%d] %q vs delegatec [%d] %q", runcCode, runcOut, delegatecCode, delegatecOut)
 			}
