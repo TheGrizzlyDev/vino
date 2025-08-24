@@ -14,7 +14,7 @@
 - Run CLI (example): `go run ./cmd/delegatec --delegate_path /usr/bin/runc run myct`.
 - Unit tests: `go test ./internal/...` — fast package tests.
 - Full test suite: `go test -v -cover ./...` — includes all packages.
-- Integration (DinD): `go test ./tests/integration/dind -v` — requires Docker daemon.
+- Integration (DinD): `go test -tags e2e ./tests/integration/dind -v` — requires Docker daemon.
 
 ## Coding Style & Naming Conventions
 - Formatting: run `gofmt -s -w .`; CI-friendly: `go vet ./...` before pushing.
