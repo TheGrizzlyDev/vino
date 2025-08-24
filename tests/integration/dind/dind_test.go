@@ -156,6 +156,25 @@ func TestRuntimeParity(t *testing.T) {
 			verify: defaultVerify(0),
 		},
 		{
+			name: "tty stdin",
+			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := "ttytest"
+				run := fmt.Sprintf("printf 'hello\\n' | script -qec \"docker run -it --name %s", cname)
+				if runtime != "" {
+					run += fmt.Sprintf(" --runtime %s", runtime)
+				}
+				run += " alpine cat\" /dev/null"
+				code, reader, err := cont.Exec(ctx, []string{"sh", "-c", run}, tcexec.Multiplexed())
+				_, _, _, _ = ExecNoOutput(ctx, cont, "docker", "rm", "-f", cname)
+				if err != nil {
+					return code, "", err
+				}
+				out, err := io.ReadAll(reader)
+				return code, string(out), err
+			},
+			verify: defaultVerify(0),
+		},
+		{
 			name: "exec after run",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := fmt.Sprintf("bgtest-%d", time.Now().UnixNano())

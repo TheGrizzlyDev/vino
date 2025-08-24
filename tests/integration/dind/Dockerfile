@@ -4,7 +4,7 @@ COPY . .
 RUN go build -o ./delegatec ./cmd/delegatec
 
 FROM docker:dind
-RUN apk add curl
+RUN apk add curl util-linux
 RUN apk add criu --repository=http://dl-cdn.alpinelinux.org/alpine/edge/testing/
 COPY --from=build /src/delegatec /usr/local/sbin/delegatec
 RUN chmod 777 /usr/local/sbin/delegatec
