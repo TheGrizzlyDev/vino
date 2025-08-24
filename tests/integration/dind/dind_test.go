@@ -163,6 +163,22 @@ func TestRuntimeParity(t *testing.T) {
 			verify: defaultVerify(0),
 		},
 		{
+			name: "memory limit",
+			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cmd := []string{"-m", "32m", "alpine", "sh", "-c", "cat /sys/fs/cgroup/memory.max"}
+				return runDocker(ctx, cont, runtime, cmd...)
+			},
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+					return err
+				}
+				if strings.TrimSpace(runcOut) != "33554432" {
+					return fmt.Errorf("unexpected memory limit: %s", strings.TrimSpace(runcOut))
+				}
+				return nil
+			},
+		},
+		{
 			name: "nginx port mapping",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := fmt.Sprintf("web-%d", time.Now().UnixNano())
