@@ -143,6 +143,7 @@ func TestRuntimeParity(t *testing.T) {
 		{"alpine false", 1},
 		{"-e FOO=bar alpine sh -c 'echo $FOO'", 0},
 		{"-v $(pwd):/data alpine sh -c 'test -f /data/go.mod'", 0},
+		{"-w /tmp alpine pwd", 0},
 	}
 	for _, c := range cases {
 		runCase("delegatec", c.cmd, c.wantCode)
