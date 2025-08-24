@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,45 +110,57 @@ func TestRuntimeParity(t *testing.T) {
 	}
 
 	type caseFn func(context.Context, tc.Container, string) (int, string, error)
+	type verifyFn func(int, string, int, string) error
+	var defaultVerify = func(wantCode int) verifyFn {
+		return func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+			if runcCode != delegatecCode || runcOut != delegatecOut {
+				return fmt.Errorf("mismatch: runc [%d] %q vs delegatec [%d] %q", runcCode, runcOut, delegatecCode, delegatecOut)
+			}
+			if runcCode != wantCode {
+				return fmt.Errorf("unexpected exit code: got %d want %d", runcCode, wantCode)
+			}
+			return nil
+		}
+	}
 	cases := []struct {
-		name     string
-		fn       caseFn
-		wantCode int
+		name   string
+		fn     caseFn
+		verify verifyFn
 	}{
 		{
 			name: "echo",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				return runDocker(ctx, cont, runtime, "alpine", "echo", "hello")
 			},
-			wantCode: 0,
+			verify: defaultVerify(0),
 		},
 		{
 			name: "false",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				return runDocker(ctx, cont, runtime, "alpine", "false")
 			},
-			wantCode: 1,
+			verify: defaultVerify(1),
 		},
 		{
 			name: "env",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				return runDocker(ctx, cont, runtime, "-e", "FOO=bar", "alpine", "sh", "-c", "echo $FOO")
 			},
-			wantCode: 0,
+			verify: defaultVerify(0),
 		},
 		{
 			name: "volume",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				return runDocker(ctx, cont, runtime, "-v", "/:/data", "alpine", "sh", "-c", "test -f /data/go.mod")
 			},
-			wantCode: 0,
+			verify: defaultVerify(0),
 		},
 		{
 			name: "workdir",
 			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				return runDocker(ctx, cont, runtime, "-w", "/tmp", "alpine", "pwd")
 			},
-			wantCode: 0,
+			verify: defaultVerify(0),
 		},
 		{
 			name: "nginx port mapping",
@@ -165,7 +178,35 @@ func TestRuntimeParity(t *testing.T) {
 				out, err := io.ReadAll(reader)
 				return code, string(out), err
 			},
-			wantCode: 0,
+			verify: defaultVerify(0),
+		},
+		{
+			name: "user and capabilities",
+			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cmd := []string{"--user", "1000:1000", "alpine", "sh", "-c", "id -u; id -g; cat /proc/self/status | grep CapEff; ping -c 1 127.0.0.1"}
+				return runDocker(ctx, cont, runtime, cmd...)
+			},
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				verifyOut := func(runtime, out string) error {
+					if !strings.Contains(out, "1000\n1000") {
+						return fmt.Errorf("unexpected uid/gid output: %q", out)
+					}
+					if !strings.Contains(out, "CapEff") {
+						return fmt.Errorf("missing CapEff line: %q", out)
+					}
+					return nil
+				}
+				if err := verifyOut("runc", runcOut); err != nil {
+					return err
+				}
+				if err := verifyOut("delegatec", delegatecOut); err != nil {
+					return err
+				}
+				if runcCode != delegatecCode {
+					return fmt.Errorf("mismatch: runc [%d] vs delegatec [%d]", runcCode, delegatecCode)
+				}
+				return nil
+			},
 		},
 	}
 
@@ -185,15 +226,10 @@ func TestRuntimeParity(t *testing.T) {
 			t.Logf("delegatec exited with %d", delegatecCode)
 			t.Logf("delegatec output:\n%s", delegatecOut)
 
-			if runcCode != delegatecCode || runcOut != delegatecOut {
-				if delegatecCode != 0 {
-					logDelegatecLogs(t, ctx, cont)
-				}
+			if err := c.verify(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+				logDelegatecLogs(t, ctx, cont)
 				logRuncLogs(t, ctx, cont)
-				t.Fatalf("mismatch: runc [%d] %q vs delegatec [%d] %q", runcCode, runcOut, delegatecCode, delegatecOut)
-			}
-			if runcCode != c.wantCode {
-				t.Fatalf("unexpected exit code: got %d want %d", runcCode, c.wantCode)
+				t.Fatal(err)
 			}
 		})
 	}
