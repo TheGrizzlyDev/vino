@@ -92,14 +92,14 @@ func TestRuntimeParity(t *testing.T) {
 		if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil || code != 0 {
 			t.Skipf("skipping checkpoint restore: failed to start dummy container: %v", err)
 		}
-		defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+		t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
 
 		if code, out, serr, err := ExecNoOutput(ctx, cont, "docker", "checkpoint", "ls", cname); err != nil || code != 0 || strings.Contains(strings.ToLower(out+serr), "unsupported") {
 			t.Skipf("skipping checkpoint restore: docker checkpoint ls failed (exit %d): %v\nstdout:\n%s\nstderr:\n%s", code, err, out, serr)
 		}
 	}
 
-	type caseFn func(context.Context, tc.Container, string) (int, string, error)
+	type caseFn func(*testing.T, context.Context, tc.Container, string) (int, string, error)
 	type verifyFn func(int, string, int, string) error
 	var defaultVerify = func(wantCode int) verifyFn {
 		return func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
@@ -120,42 +120,42 @@ func TestRuntimeParity(t *testing.T) {
 	}{
 		{
 			name: "echo",
-			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				return RunDocker(ctx, cont, runtime, "alpine", "echo", "hello")
 			},
 			verify: defaultVerify(0),
 		},
 		{
 			name: "false",
-			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				return RunDocker(ctx, cont, runtime, "alpine", "false")
 			},
 			verify: defaultVerify(1),
 		},
 		{
 			name: "env",
-			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				return RunDocker(ctx, cont, runtime, "-e", "FOO=bar", "alpine", "sh", "-c", "echo $FOO")
 			},
 			verify: defaultVerify(0),
 		},
 		{
 			name: "volume",
-			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				return RunDocker(ctx, cont, runtime, "-v", "/:/data", "alpine", "sh", "-c", "test -f /data/go.mod")
 			},
 			verify: defaultVerify(0),
 		},
 		{
 			name: "workdir",
-			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				return RunDocker(ctx, cont, runtime, "-w", "/tmp", "alpine", "pwd")
 			},
 			verify: defaultVerify(0),
 		},
 		{
 			name: "exec after run",
-			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := fmt.Sprintf("bgtest-%d", time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
 				if runtime != "" {
@@ -165,7 +165,7 @@ func TestRuntimeParity(t *testing.T) {
 				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
-				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
 				execCmd := []string{"docker", "exec", cname, "sh", "-c", "echo hello"}
 				code, reader, err := cont.Exec(ctx, execCmd, tcexec.Multiplexed())
 				if err != nil {
@@ -178,7 +178,7 @@ func TestRuntimeParity(t *testing.T) {
 		},
 		{
 			name: "memory limit",
-			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cmd := []string{"-m", "32m", "alpine", "sh", "-c", "cat /sys/fs/cgroup/memory.max"}
 				return RunDocker(ctx, cont, runtime, cmd...)
 			},
@@ -194,7 +194,7 @@ func TestRuntimeParity(t *testing.T) {
 		},
 		{
 			name: "cpu limit",
-			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cmd := []string{"--cpus", "0.5", "alpine", "sh", "-c", "cat /sys/fs/cgroup/cpu.max"}
 				return RunDocker(ctx, cont, runtime, cmd...)
 			},
@@ -210,7 +210,7 @@ func TestRuntimeParity(t *testing.T) {
 		},
 		{
 			name: "update limits",
-			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := fmt.Sprintf("update-%d", time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
 				if runtime != "" {
@@ -225,7 +225,7 @@ func TestRuntimeParity(t *testing.T) {
 				} else {
 					io.Copy(io.Discard, reader)
 				}
-				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
 
 				updateCmd := []string{"docker", "update", "--memory", "32m", "--memory-swap", "64m", cname}
 				code, reader, err := cont.Exec(ctx, updateCmd)
@@ -270,12 +270,12 @@ func TestRuntimeParity(t *testing.T) {
 		},
 		{
 			name: "nginx port mapping",
-			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := fmt.Sprintf("web-%d", time.Now().UnixNano())
 				if code, _, err := RunDocker(ctx, cont, runtime, "-d", "--name", cname, "-p", "8080:80", "nginx"); err != nil || code != 0 {
 					return code, "", fmt.Errorf("start nginx: %w", err)
 				}
-				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
 				time.Sleep(1 * time.Second)
 				code, reader, err := cont.Exec(ctx, []string{"curl", "-fsSL", "http://localhost:8080"}, tcexec.Multiplexed())
 				if err != nil {
@@ -288,7 +288,7 @@ func TestRuntimeParity(t *testing.T) {
 		},
 		{
 			name: "user and capabilities",
-			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cmd := []string{"--user", "1000:1000", "alpine", "sh", "-c", "id -u; id -g; cat /proc/self/status | grep CapEff; ping -c 1 127.0.0.1"}
 				return RunDocker(ctx, cont, runtime, cmd...)
 			},
@@ -319,7 +319,7 @@ func TestRuntimeParity(t *testing.T) {
 			pretest: func(t *testing.T, ctx context.Context, cont tc.Container) {
 				requireCheckpointSupport(t, ctx, cont)
 			},
-			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := fmt.Sprintf("ckpt-%d", time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
 				if runtime != "" {
@@ -329,8 +329,8 @@ func TestRuntimeParity(t *testing.T) {
 				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
-				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
-				defer cont.Exec(ctx, []string{"docker", "checkpoint", "rm", cname, "ckpt"})
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "checkpoint", "rm", cname, "ckpt"}) })
 
 				code, out, serr, err := ExecNoOutput(ctx, cont, "docker", "checkpoint", "create", "--debug", cname, "ckpt")
 				t.Logf("docker checkpoint create stdout:\n%s", out)
@@ -355,7 +355,7 @@ func TestRuntimeParity(t *testing.T) {
 		},
 		{
 			name: "pause/unpause",
-			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := fmt.Sprintf("pause-%d", time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
 				if runtime != "" {
@@ -365,7 +365,7 @@ func TestRuntimeParity(t *testing.T) {
 				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
-				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
 
 				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "pause", cname); err != nil {
 					return code, "", fmt.Errorf("pause container: %w", err)
@@ -387,7 +387,7 @@ func TestRuntimeParity(t *testing.T) {
 		},
 		{
 			name: "top",
-			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := fmt.Sprintf("top-%d", time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
 				if runtime != "" {
@@ -402,7 +402,7 @@ func TestRuntimeParity(t *testing.T) {
 				} else {
 					io.Copy(io.Discard, reader)
 				}
-				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
 
 				topCmd := []string{"docker", "top", cname, "-o", "pid,comm", "-A"}
 				code, reader, err := cont.Exec(ctx, topCmd, tcexec.Multiplexed())
@@ -431,14 +431,14 @@ func TestRuntimeParity(t *testing.T) {
 			if c.pretest != nil {
 				c.pretest(t, ctx, cont)
 			}
-			runcCode, runcOut, err := c.fn(ctx, cont, "runc")
+			runcCode, runcOut, err := c.fn(t, ctx, cont, "runc")
 			if err != nil {
 				t.Fatalf("runc exec failed: %v", err)
 			}
 			t.Logf("runc exited with %d", runcCode)
 			t.Logf("runc output:\n%s", runcOut)
 
-			delegatecCode, delegatecOut, err := c.fn(ctx, cont, "delegatec")
+			delegatecCode, delegatecOut, err := c.fn(t, ctx, cont, "delegatec")
 			if err != nil {
 				t.Fatalf("delegatec exec failed: %v", err)
 			}
