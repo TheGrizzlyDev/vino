@@ -5,13 +5,17 @@ import (
 	"testing"
 )
 
-func TestParseFlags_Exec_FlagAfterArgFails(t *testing.T) {
+func TestParseFlags_Exec_ProcessFlag(t *testing.T) {
 	t.Parallel()
 
-	args := []string{"--tty", "cid", "--no-pivot", "--", "/bin/sh"}
+	args := []string{"cid", "--process", "proc.json"}
 	var cmd Exec
-	if err := Parse(&cmd, args); err == nil {
-		t.Fatalf("expected error, got nil")
+	if err := Parse(&cmd, args); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	expected := Exec{ContainerID: "cid", Process: "proc.json"}
+	if !reflect.DeepEqual(cmd, expected) {
+		t.Fatalf("got %#v want %#v", cmd, expected)
 	}
 }
 

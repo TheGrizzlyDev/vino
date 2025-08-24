@@ -468,9 +468,13 @@ func (Exec) Slots() Slot {
 			FlagGroup{"global"},
 			Subcommand{Value: "exec"},
 			Argument{Name: "container_id"},
-			Literal{Value: "--"},
-			Argument{Name: "command"},
-			Arguments{Name: "args"},
+			Group{
+				Ordered: []Slot{
+					Literal{Value: "--"},
+					Argument{Name: "command"},
+					Arguments{Name: "args"},
+				},
+			},
 		},
 	}
 }
