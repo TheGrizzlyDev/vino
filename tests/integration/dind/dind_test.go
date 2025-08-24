@@ -412,6 +412,35 @@ func TestRuntimeParity(t *testing.T) {
 			},
 			verify: defaultVerify(0),
 		},
+		{
+			name: "top",
+			fn: func(ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("top-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "sleep", "1000")
+				if code, reader, err := cont.Exec(ctx, runCmd, tcexec.Multiplexed()); err != nil || code != 0 {
+					if err == nil {
+						io.Copy(io.Discard, reader)
+					}
+					return code, "", fmt.Errorf("start container: %w", err)
+				} else {
+					io.Copy(io.Discard, reader)
+				}
+				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+
+				topCmd := []string{"docker", "top", cname}
+				code, reader, err := cont.Exec(ctx, topCmd, tcexec.Multiplexed())
+				if err != nil {
+					return code, "", err
+				}
+				out, err := io.ReadAll(reader)
+				return code, string(out), err
+			},
+			verify: defaultVerify(0),
+		},
 	}
 
 	for _, c := range cases {
