@@ -498,6 +498,51 @@ func TestRuntimeParity(t *testing.T) {
 			},
 		},
 		{
+			name: "container logs",
+			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("logtest-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "sh", "-c", "echo stdout; echo stderr >&2")
+				code, reader, err := cont.Exec(ctx, runCmd, tcexec.Multiplexed())
+				if reader != nil {
+					io.Copy(io.Discard, reader)
+				}
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
+				if err != nil {
+					return code, "", err
+				}
+
+				logCmd := []string{"docker", "logs", cname}
+				lcode, reader, err := cont.Exec(ctx, logCmd, tcexec.Multiplexed())
+				if err != nil {
+					if reader != nil {
+						io.Copy(io.Discard, reader)
+					}
+					return lcode, "", err
+				}
+				out, err := io.ReadAll(reader)
+				if err != nil {
+					return lcode, "", err
+				}
+				if lcode != 0 {
+					return lcode, "", fmt.Errorf("docker logs exit %d: %s", lcode, strings.TrimSpace(string(out)))
+				}
+				return code, string(out), nil
+			},
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+					return err
+				}
+				if strings.TrimSpace(runcOut) != "stdout\nstderr" {
+					return fmt.Errorf("unexpected logs: %q", runcOut)
+				}
+				return nil
+			},
+		},
+		{
 			name: "kill sigkill",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := fmt.Sprintf("kill-kill-%d", time.Now().UnixNano())
