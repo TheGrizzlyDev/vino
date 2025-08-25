@@ -778,6 +778,38 @@ func TestRuntimeParity(t *testing.T) {
 				return nil
 			},
 		},
+		{
+			name: "docker commit",
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("commit-%s-%d", runtime, time.Now().UnixNano())
+				imgName := fmt.Sprintf("commit-img-%s-%d", runtime, time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "sh", "-c", "echo hello > /committed && sleep infinity")
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+					return code, "", fmt.Errorf("start container: %w", err)
+				}
+				t.Cleanup(func() {
+					cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+					cont.Exec(ctx, []string{"docker", "rmi", "-f", imgName})
+				})
+				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "commit", cname, imgName); err != nil {
+					return code, "", fmt.Errorf("commit container: %w", err)
+				}
+				return RunDocker(ctx, cont, runtime, imgName, "cat", "/committed")
+			},
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+					return err
+				}
+				if strings.TrimSpace(runcOut) != "hello" {
+					return fmt.Errorf("unexpected output: %q", runcOut)
+				}
+				return nil
+			},
+		},
 	}
 
 	for _, c := range cases {
