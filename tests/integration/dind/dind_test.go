@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -463,6 +464,116 @@ func TestRuntimeParity(t *testing.T) {
 					if !strings.Contains(out, "sleep") {
 						return fmt.Errorf("%s output missing 'sleep': %q", name, out)
 					}
+				}
+				return nil
+			},
+		},
+		{
+			name: "kill sigterm",
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("kill-term-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "sleep", "infinity")
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+					return code, "", fmt.Errorf("start container: %w", err)
+				}
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
+
+				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "kill", "--signal", "SIGTERM", cname); err != nil {
+					return code, "", fmt.Errorf("kill container: %w", err)
+				}
+
+				code, reader, err := cont.Exec(ctx, []string{"docker", "wait", cname}, tcexec.Multiplexed())
+				if err != nil {
+					return code, "", err
+				}
+				out, err := io.ReadAll(reader)
+				if err != nil {
+					return code, "", err
+				}
+				if code != 0 {
+					return code, "", fmt.Errorf("docker wait exit %d: %s", code, strings.TrimSpace(string(out)))
+				}
+				exitCode, err := strconv.Atoi(strings.TrimSpace(string(out)))
+				if err != nil {
+					return code, "", fmt.Errorf("parse exit code: %w", err)
+				}
+				return exitCode, "", nil
+			},
+			verify: defaultVerify(143),
+		},
+		{
+			name: "kill sigkill",
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("kill-kill-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "sleep", "infinity")
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+					return code, "", fmt.Errorf("start container: %w", err)
+				}
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
+
+				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "kill", "--signal", "SIGKILL", cname); err != nil {
+					return code, "", fmt.Errorf("kill container: %w", err)
+				}
+
+				code, reader, err := cont.Exec(ctx, []string{"docker", "wait", cname}, tcexec.Multiplexed())
+				if err != nil {
+					return code, "", err
+				}
+				out, err := io.ReadAll(reader)
+				if err != nil {
+					return code, "", err
+				}
+				if code != 0 {
+					return code, "", fmt.Errorf("docker wait exit %d: %s", code, strings.TrimSpace(string(out)))
+				}
+				exitCode, err := strconv.Atoi(strings.TrimSpace(string(out)))
+				if err != nil {
+					return code, "", fmt.Errorf("parse exit code: %w", err)
+				}
+				return exitCode, "", nil
+			},
+			verify: defaultVerify(137),
+		},
+		{
+			name: "restart",
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("restart-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "sleep", "infinity")
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+					return code, "", fmt.Errorf("start container: %w", err)
+				}
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
+
+				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "restart", cname); err != nil {
+					return code, "", fmt.Errorf("restart container: %w", err)
+				}
+
+				execCmd := []string{"docker", "exec", cname, "sh", "-c", "echo restarted"}
+				code, reader, err := cont.Exec(ctx, execCmd, tcexec.Multiplexed())
+				if err != nil {
+					return code, "", err
+				}
+				out, err := io.ReadAll(reader)
+				return code, string(out), err
+			},
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+					return err
+				}
+				if strings.TrimSpace(runcOut) != "restarted" {
+					return fmt.Errorf("unexpected output: %q", runcOut)
 				}
 				return nil
 			},
