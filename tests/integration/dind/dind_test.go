@@ -674,6 +674,48 @@ func TestRuntimeParity(t *testing.T) {
 				return nil
 			},
 		},
+		{
+			name: "healthcheck",
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("health-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname, "--health-cmd", "true", "--health-interval", "1s"}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "sleep", "infinity")
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+					return code, "", fmt.Errorf("start container: %w", err)
+				}
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
+
+				inspectCmd := []string{"docker", "inspect", "--format", "{{.State.Health.Status}}", cname}
+				var status string
+				for i := 0; i < 10; i++ {
+					code, out, _, err := ExecNoOutput(ctx, cont, inspectCmd...)
+					if err == nil && code == 0 {
+						s := strings.TrimSpace(out)
+						if s == "healthy" || s == "unhealthy" {
+							status = s
+							break
+						}
+					}
+					time.Sleep(time.Second)
+				}
+				if status == "" {
+					return 1, "", fmt.Errorf("failed to get health status")
+				}
+				return 0, status, nil
+			},
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+					return err
+				}
+				if strings.TrimSpace(runcOut) != "healthy" {
+					return fmt.Errorf("unexpected health status: %q", runcOut)
+				}
+				return nil
+			},
+		},
 	}
 
 	for _, c := range cases {
