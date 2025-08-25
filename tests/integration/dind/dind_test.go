@@ -199,6 +199,109 @@ func TestRuntimeParity(t *testing.T) {
 			verify: defaultVerify(0),
 		},
 		{
+			name: "kill sigterm",
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("sigterm-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done")
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+					return code, "", fmt.Errorf("start container: %w", err)
+				}
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
+
+				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "kill", "--signal", "TERM", cname); err != nil {
+					return code, "", fmt.Errorf("kill container: %w", err)
+				}
+
+				waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+				code, reader, err := cont.Exec(waitCtx, []string{"docker", "wait", cname}, tcexec.Multiplexed())
+				if err != nil {
+					return code, "", err
+				}
+				data, err := io.ReadAll(reader)
+				return code, string(data), err
+			},
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+					return err
+				}
+				if strings.TrimSpace(runcOut) != "143" {
+					return fmt.Errorf("unexpected exit code: %s", strings.TrimSpace(runcOut))
+				}
+				return nil
+			},
+		},
+		{
+			name: "kill sigkill",
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("sigkill-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "sh", "-c", "while true; do sleep 1; done")
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+					return code, "", fmt.Errorf("start container: %w", err)
+				}
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
+
+				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "kill", "--signal", "KILL", cname); err != nil {
+					return code, "", fmt.Errorf("kill container: %w", err)
+				}
+
+				waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+				code, reader, err := cont.Exec(waitCtx, []string{"docker", "wait", cname}, tcexec.Multiplexed())
+				if err != nil {
+					return code, "", err
+				}
+				data, err := io.ReadAll(reader)
+				return code, string(data), err
+			},
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+					return err
+				}
+				if strings.TrimSpace(runcOut) != "137" {
+					return fmt.Errorf("unexpected exit code: %s", strings.TrimSpace(runcOut))
+				}
+				return nil
+			},
+		},
+		{
+			name: "restart",
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("restart-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "sh", "-c", "while true; do sleep 1; done")
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+					return code, "", fmt.Errorf("start container: %w", err)
+				}
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
+
+				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "restart", cname); err != nil {
+					return code, "", fmt.Errorf("restart container: %w", err)
+				}
+
+				execCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+				code, reader, err := cont.Exec(execCtx, []string{"docker", "exec", cname, "sh", "-c", "echo hello"}, tcexec.Multiplexed())
+				if err != nil {
+					return code, "", err
+				}
+				data, err := io.ReadAll(reader)
+				return code, string(data), err
+			},
+			verify: defaultVerify(0),
+		},
+		{
 			name: "memory limit",
 			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cmd := []string{"-m", "32m", "alpine", "sh", "-c", "cat /sys/fs/cgroup/memory.max"}
