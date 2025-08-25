@@ -716,6 +716,22 @@ func TestRuntimeParity(t *testing.T) {
 				return nil
 			},
 		},
+		{
+			name: "device mapping",
+			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cmd := []string{"--device", "/dev/null:/dev/testnull", "alpine", "sh", "-c", "echo hi > /dev/testnull && wc -c < /dev/testnull"}
+				return RunDocker(ctx, cont, runtime, cmd...)
+			},
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+					return err
+				}
+				if strings.TrimSpace(runcOut) != "0" {
+					return fmt.Errorf("unexpected output: %q", runcOut)
+				}
+				return nil
+			},
+		},
 	}
 
 	for _, c := range cases {
