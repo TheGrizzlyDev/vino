@@ -732,6 +732,52 @@ func TestRuntimeParity(t *testing.T) {
 				return nil
 			},
 		},
+		{
+			name: "host networking",
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("hostnet-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname, "--network", "host"}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "hashicorp/http-echo", "-text", "hello", "-listen", ":8081")
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+					return code, "", fmt.Errorf("start server: %w", err)
+				}
+				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
+
+				pollCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+
+				for {
+					code, reader, err := cont.Exec(pollCtx, []string{"curl", "-fsSL", "--max-time", "1", "http://localhost:8081"}, tcexec.Multiplexed())
+					if err == nil && code == 0 {
+						data, err := io.ReadAll(reader)
+						return code, string(data), err
+					}
+					if err == nil {
+						io.Copy(io.Discard, reader)
+					}
+					select {
+					case <-pollCtx.Done():
+						if err == nil {
+							err = pollCtx.Err()
+						}
+						return code, "", err
+					case <-time.After(100 * time.Millisecond):
+					}
+				}
+			},
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+					return err
+				}
+				if strings.TrimSpace(runcOut) != "hello" {
+					return fmt.Errorf("unexpected response: %q", runcOut)
+				}
+				return nil
+			},
+		},
 	}
 
 	for _, c := range cases {
