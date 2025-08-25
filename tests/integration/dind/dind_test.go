@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -115,6 +116,7 @@ func TestRuntimeParity(t *testing.T) {
 			return nil
 		}
 	}
+	const cpContent = "hello from host"
 	cases := []struct {
 		name    string
 		fn      caseFn
@@ -155,6 +157,63 @@ func TestRuntimeParity(t *testing.T) {
 				return RunDocker(ctx, cont, runtime, "-w", "/tmp", "alpine", "pwd")
 			},
 			verify: defaultVerify(0),
+		},
+		{
+			name: "docker cp",
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				tmpDir := t.TempDir()
+				hostFile := filepath.Join(tmpDir, "cp.txt")
+				if err := os.WriteFile(hostFile, []byte(cpContent), 0o600); err != nil {
+					return 0, "", fmt.Errorf("write temp file: %w", err)
+				}
+				if err := cont.CopyFileToContainer(ctx, hostFile, "/tmp/in.txt", 0o600); err != nil {
+					return 0, "", fmt.Errorf("copy to container: %w", err)
+				}
+
+				cname := fmt.Sprintf("cp-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "sleep", "infinity")
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+					return code, "", fmt.Errorf("start container: %w", err)
+				}
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
+
+				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "cp", "/tmp/in.txt", fmt.Sprintf("%s:/tmp/in.txt", cname)); err != nil {
+					return code, "", fmt.Errorf("copy in: %w", err)
+				}
+
+				if code, out, serr, err := ExecNoOutput(ctx, cont, "docker", "exec", cname, "cat", "/tmp/in.txt"); err != nil || code != 0 {
+					return code, "", fmt.Errorf("exec cat: %v stdout:%s stderr:%s", err, out, serr)
+				} else if strings.TrimSpace(out) != cpContent {
+					return code, "", fmt.Errorf("container content mismatch: %q", out)
+				}
+
+				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "cp", fmt.Sprintf("%s:/tmp/in.txt", cname), "/tmp/out.txt"); err != nil {
+					return code, "", fmt.Errorf("copy out: %w", err)
+				}
+				rc, err := cont.CopyFileFromContainer(ctx, "/tmp/out.txt")
+				if err != nil {
+					return 0, "", fmt.Errorf("copy from container: %w", err)
+				}
+				defer rc.Close()
+				data, err := io.ReadAll(rc)
+				if err != nil {
+					return 0, "", err
+				}
+				return 0, string(data), nil
+			},
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+					return err
+				}
+				if strings.TrimSpace(runcOut) != cpContent {
+					return fmt.Errorf("unexpected file content: %q", runcOut)
+				}
+				return nil
+			},
 		},
 		{
 			name: "tty stdin",
