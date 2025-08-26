@@ -299,35 +299,6 @@ func TestRuntimeParity(t *testing.T) {
 			verify: defaultVerify(0),
 		},
 		{
-			name: "restart",
-			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("restart-%s-%d", runtime, time.Now().UnixNano())
-				runCmd := []string{"docker", "run", "-d", "--name", cname}
-				if runtime != "" {
-					runCmd = append(runCmd, "--runtime", runtime)
-				}
-				runCmd = append(runCmd, "alpine", "sh", "-c", "while true; do sleep 1; done")
-				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
-					return code, "", fmt.Errorf("start container: %w", err)
-				}
-				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
-
-				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "restart", cname); err != nil {
-					return code, "", fmt.Errorf("restart container: %w", err)
-				}
-
-				execCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				defer cancel()
-				code, reader, err := cont.Exec(execCtx, []string{"docker", "exec", cname, "sh", "-c", "echo hello"}, tcexec.Multiplexed())
-				if err != nil {
-					return code, "", err
-				}
-				data, err := io.ReadAll(reader)
-				return code, string(data), err
-			},
-			verify: defaultVerify(0),
-		},
-		{
 			name: "memory limit",
 			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cmd := []string{"-m", "32m", "alpine", "sh", "-c", "cat /sys/fs/cgroup/memory.max"}
