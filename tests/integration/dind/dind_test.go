@@ -851,6 +851,44 @@ func TestRuntimeParity(t *testing.T) {
 				return nil
 			},
 		},
+		{
+			name: "wait exited",
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("wait-exited-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				// run a short-lived command with a known exit code
+				runCmd = append(runCmd, "alpine", "sh", "-c", "exit 7")
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+					return code, "", fmt.Errorf("start container: %w", err)
+				}
+
+				code, reader, err := cont.Exec(ctx, []string{"docker", "wait", cname}, tcexec.Multiplexed())
+				if err != nil {
+					return code, "", err
+				}
+				out, err := io.ReadAll(reader)
+				if err != nil {
+					return code, "", err
+				}
+				if code != 0 {
+					return code, "", fmt.Errorf("docker wait exit %d: %s", code, strings.TrimSpace(string(out)))
+				}
+				exitCode, err := strconv.Atoi(strings.TrimSpace(string(out)))
+				if err != nil {
+					return code, "", fmt.Errorf("parse exit code: %w", err)
+				}
+
+				if rmCode, _, _, rmErr := ExecNoOutput(ctx, cont, "docker", "rm", cname); rmErr != nil {
+					return exitCode, "", fmt.Errorf("remove container exit %d: %w", rmCode, rmErr)
+				}
+
+				return exitCode, "", nil
+			},
+			verify: defaultVerify(7),
+		},
 	}
 
 	var (
