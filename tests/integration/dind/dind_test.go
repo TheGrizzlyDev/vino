@@ -860,6 +860,41 @@ func TestRuntimeParity(t *testing.T) {
 			},
 			verify: defaultVerify(7),
 		},
+		{
+			name: "docker attach",
+			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
+				cname := fmt.Sprintf("attach-%d", time.Now().UnixNano())
+				runCmd := []string{"docker", "run", "-d", "--name", cname}
+				if runtime != "" {
+					runCmd = append(runCmd, "--runtime", runtime)
+				}
+				runCmd = append(runCmd, "alpine", "sh", "-c", "for i in 1 2 3; do echo $i; sleep 1; done")
+				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+					return code, "", fmt.Errorf("start container: %w", err)
+				}
+				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
+
+				attachCmd := []string{"docker", "attach", cname}
+				code, reader, err := cont.Exec(ctx, attachCmd, tcexec.Multiplexed())
+				if err != nil {
+					return code, "", err
+				}
+				out, err := io.ReadAll(reader)
+				if err != nil {
+					return code, "", err
+				}
+				return code, string(out), nil
+			},
+			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+					return err
+				}
+				if strings.TrimSpace(runcOut) != "1\n2\n3" {
+					return fmt.Errorf("unexpected output: %q", runcOut)
+				}
+				return nil
+			},
+		},
 	}
 
 	var (
