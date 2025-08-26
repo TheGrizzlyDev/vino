@@ -920,7 +920,6 @@ func TestRuntimeParity(t *testing.T) {
 				delete(pending, c.name)
 				pendingMu.Unlock()
 			}()
-
 			t.Parallel()
 
 			cont := <-pool
@@ -928,6 +927,14 @@ func TestRuntimeParity(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
+
+			t.Cleanup(func() {
+				if t.Failed() {
+					LogDelegatecLogs(t, ctx, cont)
+					LogRuncLogs(t, ctx, cont)
+					logCriuCheck(t, ctx, cont)
+				}
+			})
 
 			if c.pretest != nil {
 				c.pretest(t, ctx, cont)
@@ -963,9 +970,6 @@ func TestRuntimeParity(t *testing.T) {
 			t.Logf("delegatec output:\n%s", delegRes.out)
 
 			if err := c.verify(runcRes.code, runcRes.out, delegRes.code, delegRes.out); err != nil {
-				LogDelegatecLogs(t, ctx, cont)
-				LogRuncLogs(t, ctx, cont)
-				logCriuCheck(t, ctx, cont)
 				t.Fatal(err)
 			}
 		})
