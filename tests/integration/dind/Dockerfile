@@ -1,6 +1,9 @@
 FROM golang:1.25-alpine as build
 WORKDIR /src
-COPY . .
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/delegatec cmd/delegatec
+COPY internal internal
 RUN go build -o ./delegatec ./cmd/delegatec
 
 FROM docker:dind

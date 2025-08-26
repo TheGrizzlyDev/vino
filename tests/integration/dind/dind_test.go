@@ -6,12 +6,16 @@ package dind
 import (
 	"bytes"
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime/pprof"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +24,8 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
+
+var dindParallel = flag.Int("dind.parallel", 4, "number of dind containers to run in parallel")
 
 func logCriuCheck(t *testing.T, ctx context.Context, cont tc.Container) {
 	t.Helper()
@@ -35,30 +41,39 @@ func logCriuCheck(t *testing.T, ctx context.Context, cont tc.Container) {
 	t.Logf("criu check exit code %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 }
 
-func TestRuntimeParity(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	// Build the image using the repository root as context.
+func buildDindImage(t *testing.T) string {
+	t.Helper()
 	rootDir, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatalf("failed to get root dir: %v", err)
 	}
+	image := "vino-dind-test"
+	cmd := exec.Command("docker", "build", "-t", image, "-f", filepath.Join(rootDir, "tests/integration/dind/Dockerfile"), rootDir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("failed to build image: %v\n%s", err, string(out))
+	}
+	t.Log(string(out))
+	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "-f", image).Run() })
+	return image
+}
 
+func startDindContainer(ctx context.Context, t *testing.T, image, name string, reuse bool) tc.Container {
+	t.Helper()
 	req := tc.ContainerRequest{
-		FromDockerfile: tc.FromDockerfile{
-			Context:       rootDir,
-			Dockerfile:    "tests/integration/dind/Dockerfile",
-			PrintBuildLog: true,
-		},
+		Image:      image,
+		Name:       name,
 		Privileged: true,
 		WaitingFor: wait.ForLog("API listen on /var/run/docker.sock").WithStartupTimeout(2 * time.Minute),
 	}
-
-	cont, err := tc.GenericContainer(ctx, tc.GenericContainerRequest{
+	gcr := tc.GenericContainerRequest{
 		ContainerRequest: req,
 		Started:          true,
-	})
+	}
+	if reuse {
+		gcr.Reuse = true
+	}
+	cont, err := tc.GenericContainer(ctx, gcr)
 	if err != nil {
 		if cont != nil {
 			logReader, logErr := cont.Logs(ctx)
@@ -69,14 +84,40 @@ func TestRuntimeParity(t *testing.T) {
 		}
 		t.Fatalf("failed to start container: %v", err)
 	}
-	defer func() {
-		_ = cont.Terminate(ctx)
-	}()
-
-	// create a file to verify volume mounts
 	if code, _, err := cont.Exec(ctx, []string{"sh", "-c", "echo module test > /go.mod"}); err != nil || code != 0 {
+		_ = cont.Terminate(ctx)
 		t.Fatalf("failed to create go.mod in container: %v (exit code %d)", err, code)
 	}
+	return cont
+}
+
+func TestRuntimeParity(t *testing.T) {
+	image := buildDindImage(t)
+	reuse := os.Getenv("TESTCONTAINERS_REUSE_ENABLE") == "true"
+	pool := make(chan tc.Container, *dindParallel)
+	var wg sync.WaitGroup
+	for i := 0; i < *dindParallel; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			cont := startDindContainer(ctx, t, image, fmt.Sprintf("vino-dind-%d", i), reuse)
+			cancel()
+			pool <- cont
+			if !reuse {
+				t.Cleanup(func(cont tc.Container) func() {
+					return func() {
+						ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						defer cancel()
+						if err := cont.Terminate(ctx); err != nil {
+							fmt.Printf("failed to terminate container: %v\n", err)
+						}
+					}
+				}(cont))
+			}
+		}(i)
+	}
+	wg.Wait()
 
 	// requireCheckpointSupport verifies that the host supports container
 	// checkpoint/restore by running `criu check` and `docker checkpoint ls`
@@ -170,7 +211,7 @@ func TestRuntimeParity(t *testing.T) {
 					return 0, "", fmt.Errorf("copy to container: %w", err)
 				}
 
-				cname := fmt.Sprintf("cp-%d", time.Now().UnixNano())
+				cname := fmt.Sprintf("cp-%s-%d", runtime, time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
 				if runtime != "" {
 					runCmd = append(runCmd, "--runtime", runtime)
@@ -218,7 +259,7 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "tty stdin",
 			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := "ttytest"
+				cname := fmt.Sprintf("ttytest-%s", runtime)
 				run := fmt.Sprintf("printf 'hello\\n' | script -qec \"docker run -it --name %s", cname)
 				if runtime != "" {
 					run += fmt.Sprintf(" --runtime %s", runtime)
@@ -237,7 +278,7 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "exec after run",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("bgtest-%d", time.Now().UnixNano())
+				cname := fmt.Sprintf("bgtest-%s-%d", runtime, time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
 				if runtime != "" {
 					runCmd = append(runCmd, "--runtime", runtime)
@@ -260,7 +301,7 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "restart",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("restart-%d", time.Now().UnixNano())
+				cname := fmt.Sprintf("restart-%s-%d", runtime, time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
 				if runtime != "" {
 					runCmd = append(runCmd, "--runtime", runtime)
@@ -321,7 +362,7 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "update limits",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("update-%d", time.Now().UnixNano())
+				cname := fmt.Sprintf("update-%s-%d", runtime, time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
 				if runtime != "" {
 					runCmd = append(runCmd, "--runtime", runtime)
@@ -381,7 +422,7 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "nginx port mapping",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("web-%d", time.Now().UnixNano())
+				cname := fmt.Sprintf("web-%s-%d", runtime, time.Now().UnixNano())
 				code, _, err := RunDocker(ctx, cont, runtime, "-d", "--name", cname, "-p", "8080:80", "nginx")
 				if err != nil {
 					return code, "", fmt.Errorf("start nginx: %w", err)
@@ -452,7 +493,7 @@ func TestRuntimeParity(t *testing.T) {
 				requireCheckpointSupport(t, ctx, cont)
 			},
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("ckpt-%d", time.Now().UnixNano())
+				cname := fmt.Sprintf("ckpt-%s-%d", runtime, time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
 				if runtime != "" {
 					runCmd = append(runCmd, "--runtime", runtime)
@@ -488,7 +529,7 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "pause/unpause",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("pause-%d", time.Now().UnixNano())
+				cname := fmt.Sprintf("pause-%s-%d", runtime, time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
 				if runtime != "" {
 					runCmd = append(runCmd, "--runtime", runtime)
@@ -520,7 +561,7 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "top",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("top-%d", time.Now().UnixNano())
+				cname := fmt.Sprintf("top-%s-%d", runtime, time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
 				if runtime != "" {
 					runCmd = append(runCmd, "--runtime", runtime)
@@ -559,7 +600,7 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "container logs",
 			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("logtest-%d", time.Now().UnixNano())
+				cname := fmt.Sprintf("logtest-%s-%d", runtime, time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "--name", cname}
 				if runtime != "" {
 					runCmd = append(runCmd, "--runtime", runtime)
@@ -604,7 +645,7 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "kill sigkill",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("kill-kill-%d", time.Now().UnixNano())
+				cname := fmt.Sprintf("kill-kill-%s-%d", runtime, time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
 				if runtime != "" {
 					runCmd = append(runCmd, "--runtime", runtime)
@@ -641,7 +682,7 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "restart",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("restart-%d", time.Now().UnixNano())
+				cname := fmt.Sprintf("restart-%s-%d", runtime, time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname}
 				if runtime != "" {
 					runCmd = append(runCmd, "--runtime", runtime)
@@ -677,7 +718,7 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "healthcheck",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("health-%d", time.Now().UnixNano())
+				cname := fmt.Sprintf("health-%s-%d", runtime, time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname, "--health-cmd", "true", "--health-interval", "1s"}
 				if runtime != "" {
 					runCmd = append(runCmd, "--runtime", runtime)
@@ -735,7 +776,7 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "host networking",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("hostnet-%d", time.Now().UnixNano())
+				cname := fmt.Sprintf("hostnet-%s-%d", runtime, time.Now().UnixNano())
 				runCmd := []string{"docker", "run", "-d", "--name", cname, "--network", "host"}
 				if runtime != "" {
 					runCmd = append(runCmd, "--runtime", runtime)
@@ -812,26 +853,116 @@ func TestRuntimeParity(t *testing.T) {
 		},
 	}
 
+	var (
+		pendingMu sync.Mutex
+		pending   = make(map[string]time.Time)
+	)
+	dump := func(prefix string, force bool) {
+		pendingMu.Lock()
+		names := make([]string, 0, len(pending))
+		for n, start := range pending {
+			names = append(names, fmt.Sprintf("%s (%s)", n, time.Since(start).Truncate(time.Second)))
+		}
+		pendingMu.Unlock()
+		if len(names) == 0 && !force {
+			return
+		}
+		msg := prefix
+		if len(names) > 0 {
+			msg = fmt.Sprintf("%s: %s", prefix, strings.Join(names, ", "))
+		}
+		fmt.Printf("%s\n", msg)
+		t.Log(msg)
+		var buf bytes.Buffer
+		if err := pprof.Lookup("goroutine").WriteTo(&buf, 2); err == nil {
+			fmt.Printf("goroutine dump:\n%s\n", buf.String())
+			t.Logf("goroutine dump:\n%s", buf.String())
+		} else {
+			fmt.Printf("goroutine dump failed: %v\n", err)
+			t.Logf("goroutine dump failed: %v", err)
+		}
+	}
+	monCtx, cancelMon := context.WithCancel(context.Background())
+	defer cancelMon()
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-monCtx.Done():
+				return
+			case <-ticker.C:
+				dump("pending tests", false)
+			}
+		}
+	}()
+	if d, ok := t.Deadline(); ok {
+		go func() {
+			timer := time.NewTimer(time.Until(d))
+			defer timer.Stop()
+			select {
+			case <-monCtx.Done():
+				return
+			case <-timer.C:
+				dump("test deadline reached", true)
+			}
+		}()
+	}
+
 	for _, c := range cases {
+		c := c
 		t.Run(c.name, func(t *testing.T) {
+			pendingMu.Lock()
+			pending[c.name] = time.Now()
+			pendingMu.Unlock()
+			defer func() {
+				pendingMu.Lock()
+				delete(pending, c.name)
+				pendingMu.Unlock()
+			}()
+
+			t.Parallel()
+
+			cont := <-pool
+			defer func() { pool <- cont }()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+
 			if c.pretest != nil {
 				c.pretest(t, ctx, cont)
 			}
-			runcCode, runcOut, err := c.fn(t, ctx, cont, "runc")
-			if err != nil {
-				t.Fatalf("runc exec failed: %v", err)
-			}
-			t.Logf("runc exited with %d", runcCode)
-			t.Logf("runc output:\n%s", runcOut)
 
-			delegatecCode, delegatecOut, err := c.fn(t, ctx, cont, "delegatec")
-			if err != nil {
-				t.Fatalf("delegatec exec failed: %v", err)
+			type result struct {
+				code int
+				out  string
+				err  error
 			}
-			t.Logf("delegatec exited with %d", delegatecCode)
-			t.Logf("delegatec output:\n%s", delegatecOut)
+			var runcRes, delegRes result
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				runcRes.code, runcRes.out, runcRes.err = c.fn(t, ctx, cont, "runc")
+			}()
+			go func() {
+				defer wg.Done()
+				delegRes.code, delegRes.out, delegRes.err = c.fn(t, ctx, cont, "delegatec")
+			}()
+			wg.Wait()
 
-			if err := c.verify(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+			if runcRes.err != nil {
+				t.Fatalf("runc exec failed: %v", runcRes.err)
+			}
+			if delegRes.err != nil {
+				t.Fatalf("delegatec exec failed: %v", delegRes.err)
+			}
+			t.Logf("runc exited with %d", runcRes.code)
+			t.Logf("runc output:\n%s", runcRes.out)
+			t.Logf("delegatec exited with %d", delegRes.code)
+			t.Logf("delegatec output:\n%s", delegRes.out)
+
+			if err := c.verify(runcRes.code, runcRes.out, delegRes.code, delegRes.out); err != nil {
 				LogDelegatecLogs(t, ctx, cont)
 				LogRuncLogs(t, ctx, cont)
 				logCriuCheck(t, ctx, cont)
