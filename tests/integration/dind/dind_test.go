@@ -974,9 +974,11 @@ func TestRuntimeParity(t *testing.T) {
 
 			t.Cleanup(func() {
 				if t.Failed() {
-					LogDelegatecLogs(t, ctx, cont)
-					LogRuncLogs(t, ctx, cont)
-					logCriuCheck(t, ctx, cont)
+					logCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					LogDelegatecLogs(t, logCtx, cont)
+					LogRuncLogs(t, logCtx, cont)
+					logCriuCheck(t, logCtx, cont)
 				}
 			})
 
