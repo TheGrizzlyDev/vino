@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -124,34 +125,45 @@ func (w *Wrapper) Run(cmd Command) error {
 			maxFD = fd
 		}
 	}
-	files := make([]*os.File, maxFD+1)
-	files[0] = os.Stdin
-	files[1] = os.Stdout
-	files[2] = os.Stderr
+	extra := make([]*os.File, maxFD-2)
 	for _, fd := range fds {
-		files[fd] = os.NewFile(uintptr(fd), "")
+		extra[fd-3] = os.NewFile(uintptr(fd), "")
 	}
-
-	attr := &os.ProcAttr{Files: files, Dir: execCmd.Dir, Env: execCmd.Env}
-	if attr.Env == nil {
-		attr.Env = os.Environ()
+	if len(extra) > 0 {
+		execCmd.ExtraFiles = extra
 	}
-	if execCmd.SysProcAttr != nil {
-		attr.Sys = execCmd.SysProcAttr
-	}
-	proc, err := os.StartProcess(execCmd.Path, execCmd.Args, attr)
-	if err != nil {
+	if err := execCmd.Start(); err != nil {
+		for _, f := range extra {
+			if f != nil {
+				f.Close()
+			}
+		}
 		return fmt.Errorf("start process: %w", err)
 	}
-	for _, fd := range fds {
-		files[fd].Close()
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh)
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		for s := range sigCh {
+			_ = execCmd.Process.Signal(s)
+		}
+	}()
+	defer func() {
+		signal.Stop(sigCh)
+		close(sigCh)
+		<-doneCh
+	}()
+	for _, f := range extra {
+		if f != nil {
+			f.Close()
+		}
 	}
-	state, err := proc.Wait()
-	if err != nil {
+	if err := execCmd.Wait(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return exitErr
+		}
 		return fmt.Errorf("wait process: %w", err)
-	}
-	if code := state.ExitCode(); code != 0 {
-		return &exec.ExitError{ProcessState: state}
 	}
 	return nil
 }
