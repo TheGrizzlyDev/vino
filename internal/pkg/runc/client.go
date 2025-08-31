@@ -3,6 +3,7 @@ package runc
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 )
 
@@ -83,6 +84,31 @@ func (c *delegatingCliClient) Command(ctx context.Context, cmd Command) (*exec.C
 		forward = c.middleware[i](forward)
 	}
 	return forward(ctx, cmd)
+}
+
+func requiresStdin(cmd Command) bool {
+	switch cmd.(type) {
+	case Run, *Run,
+		Exec, *Exec,
+		Restore, *Restore,
+		Update, *Update:
+		return true
+	default:
+		return false
+	}
+}
+
+func InheritStdin(next Forward) Forward {
+	return func(ctx context.Context, cmd Command) (*exec.Cmd, error) {
+		execCmd, err := next(ctx, cmd)
+		if err != nil {
+			return nil, err
+		}
+		if requiresStdin(cmd) {
+			execCmd.Stdin = os.Stdin
+		}
+		return execCmd, nil
+	}
 }
 
 // Only returns a middleware that invokes mw only when the command's active

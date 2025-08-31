@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -143,31 +142,6 @@ type Commands struct {
 	Features   *DelegatecCmd[runc.Features]
 }
 
-func requiresStdin(cmd runc.Command) bool {
-	switch cmd.(type) {
-	case runc.Run, *runc.Run,
-		runc.Exec, *runc.Exec,
-		runc.Restore, *runc.Restore,
-		runc.Update, *runc.Update:
-		return true
-	default:
-		return false
-	}
-}
-
-func inheritStdin(next runc.Forward) runc.Forward {
-	return func(ctx context.Context, cmd runc.Command) (*exec.Cmd, error) {
-		execCmd, err := next(ctx, cmd)
-		if err != nil {
-			return nil, err
-		}
-		if requiresStdin(cmd) {
-			execCmd.Stdin = os.Stdin
-		}
-		return execCmd, nil
-	}
-}
-
 func main() {
 	f, err := os.OpenFile("/var/log/delegatec.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
@@ -210,12 +184,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "no command specified")
 		os.Exit(1)
 	}
-
-	go func() {
-		time.Sleep(time.Minute)
-		log.Printf("Failed command: %+v\n", cmd)
-		os.Exit(1)
-	}()
 
 	cli, err := runc.NewDelegatingCliClient(delegatePath, inheritStdin)
 	if err != nil {
