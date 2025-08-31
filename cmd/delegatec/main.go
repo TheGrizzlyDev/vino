@@ -185,7 +185,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	cli, err := runc.NewDelegatingCliClient(delegatePath, inheritStdin)
+	cli, err := runc.NewDelegatingCliClient(delegatePath, runc.InheritStdin)
 	if err != nil {
 		log.Printf("failed to create delegating client: %v\nenv: %v", err, os.Environ())
 		fmt.Fprintf(os.Stderr, "failed to create delegating client: %v\nenv: %v", err, os.Environ())
