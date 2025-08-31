@@ -191,6 +191,24 @@ func Parse(cmd Command, args []string) error {
 		switch v := s.(type) {
 		case Group:
 			if idx >= len(args) {
+				onlyOptional := true
+				for _, o := range v.Ordered {
+					switch o.(type) {
+					case FlagGroup, Subcommand:
+					case Literal:
+						// handled below
+						onlyOptional = false
+						break
+					default:
+						onlyOptional = false
+					}
+					if !onlyOptional {
+						break
+					}
+				}
+				if onlyOptional {
+					return nil
+				}
 				if len(v.Ordered) > 0 {
 					if _, ok := v.Ordered[0].(Literal); ok {
 						return nil

@@ -8,16 +8,16 @@ type cmdUnion struct {
 }
 
 type wrapperCmd[T Command] struct {
-    Command T `runc_embed:""`
+	Command T `runc_embed:""`
 
-    DelegatePath string `runc_flag:"--delegate_path" runc_group:"delegate"`
+	DelegatePath string `runc_flag:"--delegate_path" runc_group:"delegate"`
 }
 
 func (w wrapperCmd[T]) Slots() Slot {
-    return Group{
-        Unordered: []Slot{FlagGroup{Name: "delegate"}},
-        Ordered:   []Slot{w.Command.Slots()},
-    }
+	return Group{
+		Unordered: []Slot{FlagGroup{Name: "delegate"}},
+		Ordered:   []Slot{w.Command.Slots()},
+	}
 }
 
 func TestParseAny_Run(t *testing.T) {
@@ -158,5 +158,19 @@ func TestParseAny_SubcommandAfterFlags(t *testing.T) {
 	}
 	if u.Run.Command.ContainerID != "cid" {
 		t.Fatalf("ContainerID got %q", u.Run.Command.ContainerID)
+	}
+}
+
+func TestParseAny_Features(t *testing.T) {
+	t.Parallel()
+
+	var u struct {
+		Features *Features
+	}
+	if err := ParseAny(&u, []string{"features"}); err != nil {
+		t.Fatalf("ParseAny: %v", err)
+	}
+	if u.Features == nil {
+		t.Fatalf("Features command not populated")
 	}
 }
