@@ -3,18 +3,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"reflect"
-	"sort"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/TheGrizzlyDev/vino/internal/pkg/runc"
-	"golang.org/x/sys/unix"
 )
 
 type logWriter struct {
@@ -170,53 +168,11 @@ func inheritStdin(next runc.Forward) runc.Forward {
 	}
 }
 
-func inheritedFDs(exclude ...int) ([]int, error) {
-	dir, err := os.Open("/proc/self/fd")
-	if err != nil {
-		return nil, err
-	}
-	defer dir.Close()
-
-	dirFD := int(dir.Fd())
-
-	entries, err := dir.ReadDir(-1)
-	if err != nil {
-		return nil, err
-	}
-
-	excluded := make(map[int]struct{}, len(exclude))
-	for _, fd := range exclude {
-		excluded[fd] = struct{}{}
-	}
-
-	var fds []int
-	for _, e := range entries {
-		fd, err := strconv.Atoi(e.Name())
-		if err != nil || fd < 3 || fd == dirFD {
-			continue
-		}
-		if _, skip := excluded[fd]; skip {
-			continue
-		}
-		if _, err := unix.FcntlInt(uintptr(fd), unix.F_SETFD, 0); err != nil {
-			if err == unix.EBADF {
-				continue
-			}
-			return nil, fmt.Errorf("fcntl fd %d: %w", fd, err)
-		}
-		fds = append(fds, fd)
-	}
-
-	sort.Ints(fds)
-	return fds, nil
-}
-
 func main() {
 	f, err := os.OpenFile("/var/log/delegatec.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalf("error opening file: %v", err)
 	}
-	logFD := int(f.Fd())
 	defer f.Close()
 	log.SetOutput(f)
 
@@ -268,63 +224,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	execCmd, err := cli.Command(context.Background(), cmd)
-	if err != nil {
-		log.Printf("failed to create command: %v\nenv: %v", err, os.Environ())
-		fmt.Fprintf(os.Stderr, "failed to create command: %v\nenv: %v", err, os.Environ())
-		os.Exit(1)
-	}
-
-	fds, err := inheritedFDs(logFD)
-	if err != nil {
-		log.Printf("failed to collect inherited fds: %v", err)
-	}
-
-	log.Printf("executing command: %s %v\n", execCmd.Path, execCmd.Args)
-
-	maxFD := 2
-	for _, fd := range fds {
-		if fd > maxFD {
-			maxFD = fd
+	w := runc.Wrapper{Delegate: cli}
+	if err := w.Run(cmd); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.ExitCode())
 		}
-	}
-	files := make([]*os.File, maxFD+1)
-	files[0] = os.Stdin
-	files[1] = os.Stdout
-	files[2] = os.Stderr
-	for _, fd := range fds {
-		files[fd] = os.NewFile(uintptr(fd), "")
-	}
-
-	attr := &os.ProcAttr{
-		Files: files,
-		Dir:   execCmd.Dir,
-		Env:   execCmd.Env,
-	}
-	if attr.Env == nil {
-		attr.Env = os.Environ()
-	}
-	if execCmd.SysProcAttr != nil {
-		attr.Sys = execCmd.SysProcAttr
-	}
-
-	proc, err := os.StartProcess(execCmd.Path, execCmd.Args, attr)
-	if err != nil {
-		log.Printf("command start failed: %v\nenv: %v", err, os.Environ())
-		fmt.Fprintf(os.Stderr, "command start failed: %v\nenv: %v", err, os.Environ())
+		log.Printf("command run failed: %v\nenv: %v", err, os.Environ())
+		fmt.Fprintf(os.Stderr, "command run failed: %v\nenv: %v", err, os.Environ())
 		os.Exit(1)
-	}
-	for _, fd := range fds {
-		files[fd].Close()
-	}
-
-	state, err := proc.Wait()
-	if err != nil {
-		log.Printf("command wait failed: %v\nenv: %v", err, os.Environ())
-		fmt.Fprintf(os.Stderr, "command wait failed: %v\nenv: %v", err, os.Environ())
-		os.Exit(1)
-	}
-	if code := state.ExitCode(); code != 0 {
-		os.Exit(code)
 	}
 }
