@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"golang.org/x/sys/unix"
 )
 
 type BundleRewriter interface {
@@ -259,6 +260,21 @@ func inheritedFDs() ([]int, error) {
 		if err != nil || fd < 3 || fd == dirFD {
 			continue
 		}
+
+		flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
+		if err != nil {
+			continue
+		}
+		if flags&unix.FD_CLOEXEC != 0 {
+			continue
+		}
+
+		if link, err := os.Readlink(filepath.Join("/proc/self/fd", e.Name())); err == nil {
+			if link == "anon_inode:[eventpoll]" || strings.HasPrefix(link, "pipe:") {
+				continue
+			}
+		}
+
 		fds = append(fds, fd)
 	}
 	return fds, nil
