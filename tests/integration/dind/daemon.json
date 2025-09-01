@@ -6,7 +6,7 @@
       },
       "vino": {
         "path": "/usr/local/sbin/vino",
-        "runtimeArgs": ["--delegate_path", "/usr/local/bin/runc"]
+        "runtimeArgs": ["runc", "--delegate_path", "/usr/local/bin/runc"]
       }
     }
   }
