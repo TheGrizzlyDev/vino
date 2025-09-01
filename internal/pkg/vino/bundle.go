@@ -28,6 +28,6 @@ func (b *BundleRewriter) RewriteBundle(bundle *specs.Spec) error {
 		Path: b.HookPath,
 		Args: args,
 	}
-	bundle.Hooks.StartContainer = append(bundle.Hooks.StartContainer, h)
+	bundle.Hooks.CreateContainer = append(bundle.Hooks.CreateContainer, h)
 	return nil
 }
