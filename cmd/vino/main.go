@@ -3,12 +3,17 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"reflect"
 
 	"github.com/TheGrizzlyDev/vino/internal/pkg/runc"
 	"github.com/TheGrizzlyDev/vino/internal/pkg/vino"
+)
+
+const (
+	HOOK_SUBCOMMAND = "vino-mount-devices-hook"
 )
 
 type VinoOptions struct {
@@ -61,6 +66,8 @@ func main() {
 		if err := RuncMain(os.Args[2:]); err != nil {
 			panic(err)
 		}
+	case HOOK_SUBCOMMAND:
+		log.Println("empty hook: not implemented")
 	default:
 		panic("this subcommand isn't currently supported")
 	}
@@ -97,7 +104,16 @@ func RuncMain(args []string) error {
 		return fmt.Errorf("failed to create delegating client: %w", err)
 	}
 
-	bundleRewriter := &vino.BundleRewriter{}
+	executablePath, err := os.Executable()
+
+	if err != nil {
+		return err
+	}
+
+	bundleRewriter := &vino.BundleRewriter{
+		HookPath: executablePath,
+		HookArgs: []string{HOOK_SUBCOMMAND},
+	}
 	processRewriter := &vino.ProcessRewriter{}
 
 	w := runc.Wrapper{
