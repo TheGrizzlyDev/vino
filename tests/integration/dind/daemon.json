@@ -3,6 +3,10 @@
       "delegatec": {
         "path": "/usr/local/sbin/delegatec",
         "runtimeArgs": ["--delegate_path", "/usr/local/bin/runc"]
+      },
+      "vino": {
+        "path": "/usr/local/sbin/vino",
+        "runtimeArgs": ["--delegate_path", "/usr/local/bin/runc"]
       }
     }
   }
