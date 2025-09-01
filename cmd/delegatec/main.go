@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	cli "github.com/TheGrizzlyDev/vino/internal/pkg/cli"
 	"log"
 	"os"
 	"os/exec"
 	"reflect"
 	"sync"
 	"time"
+
+	"github.com/TheGrizzlyDev/vino/internal/pkg/cli"
 
 	"github.com/TheGrizzlyDev/vino/internal/pkg/runc"
 )

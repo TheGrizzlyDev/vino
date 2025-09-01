@@ -8,13 +8,13 @@ import (
 	"os/exec"
 	"reflect"
 
-	cli "github.com/TheGrizzlyDev/vino/internal/pkg/cli"
+	"github.com/TheGrizzlyDev/vino/internal/pkg/cli"
 	"github.com/TheGrizzlyDev/vino/internal/pkg/runc"
 	"github.com/TheGrizzlyDev/vino/internal/pkg/vino"
 )
 
 const (
-	HOOK_SUBCOMMAND = "vino-mount-devices-hook"
+	HOOK_SUBCOMMAND = "oci-runtime-hook"
 )
 
 type VinoOptions struct {
@@ -112,8 +112,9 @@ func RuncMain(args []string) error {
 	}
 
 	bundleRewriter := &vino.BundleRewriter{
-		HookPath: executablePath,
-		HookArgs: []string{HOOK_SUBCOMMAND},
+		HookPath:                executablePath,
+		CreateContainerHookArgs: []string{HOOK_SUBCOMMAND, "create"},
+		StartContainerHookArgs:  []string{HOOK_SUBCOMMAND, "start"},
 	}
 	processRewriter := &vino.ProcessRewriter{}
 
