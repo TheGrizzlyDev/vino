@@ -5,46 +5,18 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-)
 
-type Command interface {
-	Slots() Slot
-}
+	cli "github.com/TheGrizzlyDev/vino/internal/pkg/cli"
+)
 
 // Forward represents the next command construction step in a middleware chain.
 // Implementations are expected to return an *exec.Cmd ready for execution.
-type Forward func(ctx context.Context, cmd Command) (*exec.Cmd, error)
+type Forward func(ctx context.Context, cmd cli.Command) (*exec.Cmd, error)
 
 // Middleware allows wrapping of command construction logic. Each middleware
 // receives the next Forward in the chain and returns a new Forward that may
 // inspect or modify the exec.Cmd before it's returned to the caller.
 type Middleware func(next Forward) Forward
-
-// subcommandOf walks a command's Slots() and returns the Subcommand value.
-// Returns an empty string if none found (invalid).
-func subcommandOf(cmd Command) string {
-	var find func(Slot) (string, bool)
-	find = func(s Slot) (string, bool) {
-		switch v := s.(type) {
-		case Subcommand:
-			return v.Value, true
-		case Group:
-			for _, o := range v.Ordered {
-				if name, ok := find(o); ok {
-					return name, true
-				}
-			}
-		}
-		return "", false
-	}
-	if cmd == nil {
-		return ""
-	}
-	if name, ok := find(cmd.Slots()); ok {
-		return name
-	}
-	return ""
-}
 
 type RunResult struct {
 	Stdout   []byte
@@ -54,7 +26,7 @@ type RunResult struct {
 
 type Cli interface {
 	private()
-	Command(ctx context.Context, cmd Command) (*exec.Cmd, error)
+	Command(ctx context.Context, cmd cli.Command) (*exec.Cmd, error)
 }
 
 func NewDelegatingCliClient(delegatePath string, middleware ...Middleware) (Cli, error) {
@@ -72,9 +44,9 @@ type delegatingCliClient struct {
 
 func (d *delegatingCliClient) private() {}
 
-func (c *delegatingCliClient) Command(ctx context.Context, cmd Command) (*exec.Cmd, error) {
-	forward := func(ctx context.Context, cmd Command) (*exec.Cmd, error) {
-		args, err := convertToCmdline(cmd)
+func (c *delegatingCliClient) Command(ctx context.Context, cmd cli.Command) (*exec.Cmd, error) {
+	forward := func(ctx context.Context, cmd cli.Command) (*exec.Cmd, error) {
+		args, err := cli.ConvertToCmdline(cmd)
 		if err != nil {
 			return nil, err
 		}
@@ -86,7 +58,7 @@ func (c *delegatingCliClient) Command(ctx context.Context, cmd Command) (*exec.C
 	return forward(ctx, cmd)
 }
 
-func requiresStdin(cmd Command) bool {
+func requiresStdin(cmd cli.Command) bool {
 	switch cmd.(type) {
 	case Run, *Run,
 		Exec, *Exec,
@@ -99,7 +71,7 @@ func requiresStdin(cmd Command) bool {
 }
 
 func InheritStdin(next Forward) Forward {
-	return func(ctx context.Context, cmd Command) (*exec.Cmd, error) {
+	return func(ctx context.Context, cmd cli.Command) (*exec.Cmd, error) {
 		execCmd, err := next(ctx, cmd)
 		if err != nil {
 			return nil, err
@@ -116,8 +88,8 @@ func InheritStdin(next Forward) Forward {
 func Only(subcmd string, mw Middleware) Middleware {
 	return func(next Forward) Forward {
 		wrapped := mw(next)
-		return func(ctx context.Context, cmd Command) (*exec.Cmd, error) {
-			if subcommandOf(cmd) == subcmd {
+		return func(ctx context.Context, cmd cli.Command) (*exec.Cmd, error) {
+			if cli.SubcommandOf(cmd) == subcmd {
 				return wrapped(ctx, cmd)
 			}
 			return next(ctx, cmd)

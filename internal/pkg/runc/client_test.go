@@ -2,6 +2,7 @@ package runc
 
 import (
 	"context"
+	cli "github.com/TheGrizzlyDev/vino/internal/pkg/cli"
 	"os"
 	"os/exec"
 	"testing"
@@ -11,7 +12,7 @@ import (
 func TestDelegatingCliClient_MiddlewareInvoked(t *testing.T) {
 	var called bool
 	mw := func(next Forward) Forward {
-		return func(ctx context.Context, cmd Command) (*exec.Cmd, error) {
+		return func(ctx context.Context, cmd cli.Command) (*exec.Cmd, error) {
 			called = true
 			return next(ctx, cmd)
 		}
@@ -32,7 +33,7 @@ func TestDelegatingCliClient_MiddlewareInvoked(t *testing.T) {
 func TestOnlyMiddleware(t *testing.T) {
 	var count int
 	base := func(next Forward) Forward {
-		return func(ctx context.Context, cmd Command) (*exec.Cmd, error) {
+		return func(ctx context.Context, cmd cli.Command) (*exec.Cmd, error) {
 			count++
 			return next(ctx, cmd)
 		}
@@ -61,7 +62,7 @@ func TestOnlyMiddleware(t *testing.T) {
 // Test that middleware type switches narrow behavior to relevant commands.
 func TestMiddlewareTypeSwitch(t *testing.T) {
 	mw := func(next Forward) Forward {
-		return func(ctx context.Context, cmd Command) (*exec.Cmd, error) {
+		return func(ctx context.Context, cmd cli.Command) (*exec.Cmd, error) {
 			execCmd, err := next(ctx, cmd)
 			if err != nil {
 				return nil, err

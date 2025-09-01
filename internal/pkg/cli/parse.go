@@ -1,4 +1,4 @@
-package runc
+package cli
 
 import (
 	"fmt"
@@ -29,7 +29,7 @@ func ParseAny[T any](cmdUnion *T, args []string) error {
 		if !ok {
 			return fmt.Errorf("field type '%s' does not implement Command", ft.Name())
 		}
-		sub := subcommandOf(cmd)
+		sub := SubcommandOf(cmd)
 		for j, tok := range args {
 			if tok == sub {
 				// prefer earliest occurrence among candidates
@@ -69,7 +69,7 @@ func Parse(cmd Command, args []string) error {
 	if cmd == nil {
 		return fmt.Errorf("Parse: nil cmd")
 	}
-	if err := validateCommandTags(cmd); err != nil {
+	if err := ValidateCommandTags(cmd); err != nil {
 		return err
 	}
 
@@ -88,10 +88,10 @@ func Parse(cmd Command, args []string) error {
 	v := reflect.ValueOf(cmd).Elem()
 	var fields []fieldInfo
 	walkStruct(v, func(sf reflect.StructField, fv reflect.Value) {
-		flag, hasFlag := sf.Tag.Lookup("runc_flag")
-		altSpec, hasAlt := sf.Tag.Lookup("runc_flag_alternatives")
-		argG, hasArg := sf.Tag.Lookup("runc_argument")
-		grp, _ := sf.Tag.Lookup("runc_group")
+		flag, hasFlag := sf.Tag.Lookup("cli_flag")
+		altSpec, hasAlt := sf.Tag.Lookup("cli_flag_alternatives")
+		argG, hasArg := sf.Tag.Lookup("cli_argument")
+		grp, _ := sf.Tag.Lookup("cli_group")
 		if !hasFlag && !hasArg {
 			return
 		}

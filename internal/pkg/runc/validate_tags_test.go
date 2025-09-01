@@ -1,13 +1,14 @@
 package runc
 
 import (
+	cli "github.com/TheGrizzlyDev/vino/internal/pkg/cli"
 	"testing"
 )
 
 func TestValidateCommandTags(t *testing.T) {
 	t.Parallel()
 
-	commands := []Command{
+	commands := []cli.Command{
 		Checkpoint{},
 		Restore{},
 		Create{},
@@ -26,13 +27,13 @@ func TestValidateCommandTags(t *testing.T) {
 		Update{},
 	}
 
-    for _, c := range commands {
-        c := c
-        t.Run(subcommandOf(c), func(t *testing.T) {
-            t.Parallel()
-            if err := validateCommandTags(c); err != nil {
-                t.Fatalf("%T: %v", c, err)
-            }
-        })
-    }
+	for _, c := range commands {
+		c := c
+		t.Run(cli.SubcommandOf(c), func(t *testing.T) {
+			t.Parallel()
+			if err := cli.ValidateCommandTags(c); err != nil {
+				t.Fatalf("%T: %v", c, err)
+			}
+		})
+	}
 }

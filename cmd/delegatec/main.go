@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	cli "github.com/TheGrizzlyDev/vino/internal/pkg/cli"
 	"log"
 	"os"
 	"os/exec"
@@ -106,17 +107,17 @@ func (lw *logWriter) Close() error {
 	return nil
 }
 
-type DelegatecCmd[T runc.Command] struct {
-	Command      T      `runc_embed:""`
-	DelegatePath string `runc_flag:"--delegate_path" runc_group:"delegate"`
+type DelegatecCmd[T cli.Command] struct {
+	Command      T      `cli_embed:""`
+	DelegatePath string `cli_flag:"--delegate_path" cli_group:"delegate"`
 }
 
-func (d DelegatecCmd[T]) Slots() runc.Slot {
-	return runc.Group{
-		Unordered: []runc.Slot{
-			runc.FlagGroup{Name: "delegate"},
+func (d DelegatecCmd[T]) Slots() cli.Slot {
+	return cli.Group{
+		Unordered: []cli.Slot{
+			cli.FlagGroup{Name: "delegate"},
 		},
-		Ordered: []runc.Slot{
+		Ordered: []cli.Slot{
 			d.Command.Slots(),
 		},
 	}
@@ -154,14 +155,14 @@ func main() {
 	log.Printf("delegatec environment: %v\n", os.Environ())
 
 	cmds := Commands{}
-	if err := runc.ParseAny(&cmds, os.Args[1:]); err != nil {
+	if err := cli.ParseAny(&cmds, os.Args[1:]); err != nil {
 		log.Printf("failed to parse args: %v\nenv: %v", err, os.Environ())
 		fmt.Fprintf(os.Stderr, "failed to parse args: %v\nenv: %v", err, os.Environ())
 		os.Exit(1)
 	}
 
 	var (
-		cmd          runc.Command
+		cmd          cli.Command
 		delegatePath string
 	)
 
@@ -173,7 +174,7 @@ func main() {
 		}
 		delegatePath = f.Elem().FieldByName("DelegatePath").String()
 		cmdIface := f.Elem().FieldByName("Command").Interface()
-		cmd = cmdIface.(runc.Command)
+		cmd = cmdIface.(cli.Command)
 		break
 	}
 

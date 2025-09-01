@@ -1,4 +1,4 @@
-package runc
+package cli
 
 import (
 	"fmt"
@@ -6,27 +6,27 @@ import (
 	"strconv"
 )
 
-// convertToCmdline validates command values and renders: <subcommand> [flags/args…]
+// ConvertToCmdline validates command values and renders: <subcommand> [flags/args…]
 // by traversing Slots(). Literals are emitted exactly as specified.
-func convertToCmdline(cmd Command) ([]string, error) {
-	if err := validateCommandTags(cmd); err != nil {
+func ConvertToCmdline(cmd Command) ([]string, error) {
+	if err := ValidateCommandTags(cmd); err != nil {
 		return nil, err
 	}
 
 	type fieldInfo struct {
 		sf   reflect.StructField
 		val  reflect.Value
-		flag string // runc_flag value, if any
-		argG string // runc_argument value, if any (used as group/arg name)
-		grp  string // runc_group for flags
+		flag string // cli_flag value, if any
+		argG string // cli_argument value, if any (used as group/arg name)
+		grp  string // cli_group for flags
 	}
 	var fields []fieldInfo
 
 	v := reflect.ValueOf(cmd)
 	walkStruct(v, func(sf reflect.StructField, fv reflect.Value) {
-		flag, hasFlag := sf.Tag.Lookup("runc_flag")
-		argG, hasArg := sf.Tag.Lookup("runc_argument")
-		grp, _ := sf.Tag.Lookup("runc_group")
+		flag, hasFlag := sf.Tag.Lookup("cli_flag")
+		argG, hasArg := sf.Tag.Lookup("cli_argument")
+		grp, _ := sf.Tag.Lookup("cli_group")
 		if !hasFlag && !hasArg {
 			return
 		}
@@ -95,7 +95,7 @@ func convertToCmdline(cmd Command) ([]string, error) {
 					}
 					seq = append(seq, o)
 				}
-				if len(seq) == 2 && subcommandOf(cmd) == "update" {
+				if len(seq) == 2 && SubcommandOf(cmd) == "update" {
 					_, a0 := seq[0].(Subcommand)
 					_, a1 := seq[1].(Argument)
 					if a0 && a1 {
@@ -467,7 +467,7 @@ func walkStruct(v reflect.Value, visit func(sf reflect.StructField, fv reflect.V
 		fv := v.Field(i)
 
 		// recurse into anonymous embedded structs or fields tagged with
-		// runc_embed, which allows treating a named field as if it were
+		// cli_embed, which allows treating a named field as if it were
 		// anonymously embedded.
 		if sf.Anonymous {
 			switch fv.Kind() {
@@ -485,7 +485,7 @@ func walkStruct(v reflect.Value, visit func(sf reflect.StructField, fv reflect.V
 			}
 		}
 
-		if _, ok := sf.Tag.Lookup("runc_embed"); ok {
+		if _, ok := sf.Tag.Lookup("cli_embed"); ok {
 			switch fv.Kind() {
 			case reflect.Struct:
 				walkStruct(fv, visit)

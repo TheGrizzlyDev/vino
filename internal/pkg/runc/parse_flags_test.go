@@ -1,6 +1,7 @@
 package runc
 
 import (
+	cli "github.com/TheGrizzlyDev/vino/internal/pkg/cli"
 	"reflect"
 	"testing"
 )
@@ -10,7 +11,7 @@ func TestParseFlags_Exec_ProcessFlag(t *testing.T) {
 
 	args := []string{"cid", "--process", "proc.json"}
 	var cmd Exec
-	if err := Parse(&cmd, args); err != nil {
+	if err := cli.Parse(&cmd, args); err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 	expected := Exec{ContainerID: "cid", Process: "proc.json"}
@@ -25,7 +26,7 @@ func TestParseFlags_Docs_Run(t *testing.T) {
 	t.Parallel()
 	args := []string{"mycontainerid"}
 	var cmd Run
-	if err := Parse(&cmd, args); err != nil {
+	if err := cli.Parse(&cmd, args); err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 	expected := Run{ContainerID: "mycontainerid"}
@@ -39,7 +40,7 @@ func TestParseFlags_Docs_Exec(t *testing.T) {
 	t.Parallel()
 	args := []string{"-t", "mycontainerid", "--", "sh"}
 	var cmd Exec
-	if err := Parse(&cmd, args); err != nil {
+	if err := cli.Parse(&cmd, args); err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 	expected := Exec{Tty: true, ContainerID: "mycontainerid", Command: "sh"}
@@ -54,7 +55,7 @@ func TestParseFlags_Docs_RunSystemd(t *testing.T) {
 	t.Parallel()
 	args := []string{"-d", "--pid-file", "/run/mycontainerid.pid", "mycontainerid"}
 	var cmd Run
-	if err := Parse(&cmd, args); err != nil {
+	if err := cli.Parse(&cmd, args); err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 	expected := Run{
@@ -91,7 +92,7 @@ func forEachPermutation(items [][]string, f func([][]string)) {
 }
 
 // testPermutations verifies that Parse can handle any permutation of flags.
-func testPermutations[T Command](t *testing.T, before []string, flags [][]string, after []string, expected T) {
+func testPermutations[T cli.Command](t *testing.T, before []string, flags [][]string, after []string, expected T) {
 	forEachPermutation(flags, func(perm [][]string) {
 		args := append([]string{}, before...)
 		for _, p := range perm {
@@ -99,11 +100,11 @@ func testPermutations[T Command](t *testing.T, before []string, flags [][]string
 		}
 		args = append(args, after...)
 		var cmd T
-		cmdPtr, ok := any(&cmd).(Command)
+		cmdPtr, ok := any(&cmd).(cli.Command)
 		if !ok {
 			t.Fatalf("%T does not implement Command", cmd)
 		}
-		if err := Parse(cmdPtr, args); err != nil {
+		if err := cli.Parse(cmdPtr, args); err != nil {
 			t.Fatalf("args %v: %v", args, err)
 		}
 		if !reflect.DeepEqual(cmd, expected) {

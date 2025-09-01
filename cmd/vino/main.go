@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"reflect"
 
+	cli "github.com/TheGrizzlyDev/vino/internal/pkg/cli"
 	"github.com/TheGrizzlyDev/vino/internal/pkg/runc"
 	"github.com/TheGrizzlyDev/vino/internal/pkg/vino"
 )
@@ -17,20 +18,20 @@ const (
 )
 
 type VinoOptions struct {
-	DelegatePath string `runc_flag:"--delegate_path" runc_group:"delegate"`
+	DelegatePath string `cli_flag:"--delegate_path" cli_group:"delegate"`
 }
 
-type VinoRuncCommand[T runc.Command] struct {
-	Command T           `runc_embed:""`
-	Options VinoOptions `runc_embed:""`
+type VinoRuncCommand[T cli.Command] struct {
+	Command T           `cli_embed:""`
+	Options VinoOptions `cli_embed:""`
 }
 
-func (d VinoRuncCommand[T]) Slots() runc.Slot {
-	return runc.Group{
-		Unordered: []runc.Slot{
-			runc.FlagGroup{Name: "delegate"},
+func (d VinoRuncCommand[T]) Slots() cli.Slot {
+	return cli.Group{
+		Unordered: []cli.Slot{
+			cli.FlagGroup{Name: "delegate"},
 		},
-		Ordered: []runc.Slot{
+		Ordered: []cli.Slot{
 			d.Command.Slots(),
 		},
 	}
@@ -75,12 +76,12 @@ func main() {
 
 func RuncMain(args []string) error {
 	cmds := RuncCommands{}
-	if err := runc.ParseAny(&cmds, os.Args[2:]); err != nil {
+	if err := cli.ParseAny(&cmds, os.Args[2:]); err != nil {
 		return fmt.Errorf("failed to parse args: %w", err)
 	}
 
 	var (
-		cmd  runc.Command
+		cmd  cli.Command
 		opts VinoOptions
 	)
 
@@ -91,7 +92,7 @@ func RuncMain(args []string) error {
 			continue
 		}
 		opts = f.Elem().FieldByName("Options").Interface().(VinoOptions)
-		cmd = f.Elem().FieldByName("Command").Interface().(runc.Command)
+		cmd = f.Elem().FieldByName("Command").Interface().(cli.Command)
 		break
 	}
 

@@ -1,22 +1,25 @@
 package runc
 
-import "testing"
+import (
+	cli "github.com/TheGrizzlyDev/vino/internal/pkg/cli"
+	"testing"
+)
 
 type cmdUnion struct {
 	Run   *Run
 	Start *Start
 }
 
-type wrapperCmd[T Command] struct {
-	Command T `runc_embed:""`
+type wrapperCmd[T cli.Command] struct {
+	Command T `cli_embed:""`
 
-	DelegatePath string `runc_flag:"--delegate_path" runc_group:"delegate"`
+	DelegatePath string `cli_flag:"--delegate_path" cli_group:"delegate"`
 }
 
-func (w wrapperCmd[T]) Slots() Slot {
-	return Group{
-		Unordered: []Slot{FlagGroup{Name: "delegate"}},
-		Ordered:   []Slot{w.Command.Slots()},
+func (w wrapperCmd[T]) Slots() cli.Slot {
+	return cli.Group{
+		Unordered: []cli.Slot{cli.FlagGroup{Name: "delegate"}},
+		Ordered:   []cli.Slot{w.Command.Slots()},
 	}
 }
 
@@ -24,7 +27,7 @@ func TestParseAny_Run(t *testing.T) {
 	t.Parallel()
 	var u cmdUnion
 	args := []string{"run", "myid"}
-	if err := ParseAny(&u, args); err != nil {
+	if err := cli.ParseAny(&u, args); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if u.Run == nil {
@@ -42,7 +45,7 @@ func TestParseAny_Start(t *testing.T) {
 	t.Parallel()
 	var u cmdUnion
 	args := []string{"start", "cid"}
-	if err := ParseAny(&u, args); err != nil {
+	if err := cli.ParseAny(&u, args); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if u.Start == nil {
@@ -59,7 +62,7 @@ func TestParseAny_Start(t *testing.T) {
 func TestParseAny_InvalidSubcommand(t *testing.T) {
 	t.Parallel()
 	var u cmdUnion
-	if err := ParseAny(&u, []string{"bogus"}); err == nil {
+	if err := cli.ParseAny(&u, []string{"bogus"}); err == nil {
 		t.Fatalf("expected error, got nil")
 	}
 }
@@ -67,21 +70,21 @@ func TestParseAny_InvalidSubcommand(t *testing.T) {
 func TestParseAny_NoArgs(t *testing.T) {
 	t.Parallel()
 	var u cmdUnion
-	if err := ParseAny(&u, []string{}); err == nil {
+	if err := cli.ParseAny(&u, []string{}); err == nil {
 		t.Fatalf("expected error, got nil")
 	}
 }
 
 func TestParseAny_NilUnion(t *testing.T) {
 	t.Parallel()
-	if err := ParseAny[*cmdUnion](nil, []string{"run", "cid"}); err == nil {
+	if err := cli.ParseAny[*cmdUnion](nil, []string{"run", "cid"}); err == nil {
 		t.Fatalf("expected error, got nil")
 	}
 }
 
-// TestParseAny_RuncEmbed verifies that fields tagged with runc_embed expand as
+// TestParseAny_CliEmbed verifies that fields tagged with cli_embed expand as
 // if they were anonymously embedded and their flags are parsed.
-func TestParseAny_RuncEmbed(t *testing.T) {
+func TestParseAny_CliEmbed(t *testing.T) {
 	t.Parallel()
 
 	type union struct {
@@ -90,7 +93,7 @@ func TestParseAny_RuncEmbed(t *testing.T) {
 
 	var u union
 	args := []string{"run", "--delegate_path", "/tmp/d", "--keep", "cid"}
-	if err := ParseAny(&u, args); err != nil {
+	if err := cli.ParseAny(&u, args); err != nil {
 		t.Fatalf("ParseAny: %v", err)
 	}
 	if u.Run == nil {
@@ -107,9 +110,9 @@ func TestParseAny_RuncEmbed(t *testing.T) {
 	}
 }
 
-// TestParseAny_RuncEmbedEquals verifies that flags specified with --flag=value
-// syntax are properly split and parsed when runc_embed is used.
-func TestParseAny_RuncEmbedEquals(t *testing.T) {
+// TestParseAny_CliEmbedEquals verifies that flags specified with --flag=value
+// syntax are properly split and parsed when cli_embed is used.
+func TestParseAny_CliEmbedEquals(t *testing.T) {
 	t.Parallel()
 
 	type union struct {
@@ -118,7 +121,7 @@ func TestParseAny_RuncEmbedEquals(t *testing.T) {
 
 	var u union
 	args := []string{"run", "--delegate_path=/tmp/d", "--keep", "cid"}
-	if err := ParseAny(&u, args); err != nil {
+	if err := cli.ParseAny(&u, args); err != nil {
 		t.Fatalf("ParseAny: %v", err)
 	}
 	if u.Run == nil {
@@ -144,7 +147,7 @@ func TestParseAny_SubcommandAfterFlags(t *testing.T) {
 
 	var u union
 	args := []string{"--delegate_path", "/tmp/d", "run", "--keep", "cid"}
-	if err := ParseAny(&u, args); err != nil {
+	if err := cli.ParseAny(&u, args); err != nil {
 		t.Fatalf("ParseAny: %v", err)
 	}
 	if u.Run == nil {
@@ -167,7 +170,7 @@ func TestParseAny_Features(t *testing.T) {
 	var u struct {
 		Features *Features
 	}
-	if err := ParseAny(&u, []string{"features"}); err != nil {
+	if err := cli.ParseAny(&u, []string{"features"}); err != nil {
 		t.Fatalf("ParseAny: %v", err)
 	}
 	if u.Features == nil {

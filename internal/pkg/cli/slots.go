@@ -1,4 +1,4 @@
-package runc
+package cli
 
 var (
 	_ Slot = FlagGroup{}

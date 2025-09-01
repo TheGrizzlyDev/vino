@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	cli "github.com/TheGrizzlyDev/vino/internal/pkg/cli"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"golang.org/x/sys/unix"
 )
@@ -29,7 +30,7 @@ type Wrapper struct {
 	Delegate        Cli
 }
 
-func (w *Wrapper) Run(cmd Command) error {
+func (w *Wrapper) Run(cmd cli.Command) error {
 	if w.Delegate == nil {
 		return fmt.Errorf("wrapper: nil delegate")
 	}
