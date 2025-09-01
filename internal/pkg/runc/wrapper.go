@@ -24,8 +24,8 @@ type ProcessRewriter interface {
 }
 
 type Wrapper struct {
-	BundleRewriter  *BundleRewriter
-	ProcessRewriter *ProcessRewriter
+	BundleRewriter  BundleRewriter
+	ProcessRewriter ProcessRewriter
 	Delegate        Cli
 }
 
@@ -62,12 +62,12 @@ func (w *Wrapper) Run(cmd Command) error {
 				return fmt.Errorf("unmarshal bundle: %w", err)
 			}
 			if w.BundleRewriter != nil {
-				if err := (*w.BundleRewriter).RewriteBundle(&spec); err != nil {
+				if err := w.BundleRewriter.RewriteBundle(&spec); err != nil {
 					return err
 				}
 			}
 			if w.ProcessRewriter != nil && spec.Process != nil {
-				if err := (*w.ProcessRewriter).RewriteProcess(spec.Process); err != nil {
+				if err := w.ProcessRewriter.RewriteProcess(spec.Process); err != nil {
 					return err
 				}
 			}
@@ -179,7 +179,7 @@ func (w *Wrapper) rewriteExec(c *Exec, tmpPath *string) error {
 		if err := json.Unmarshal(data, &p); err != nil {
 			return fmt.Errorf("unmarshal process: %w", err)
 		}
-		if err := (*w.ProcessRewriter).RewriteProcess(&p); err != nil {
+		if err := w.ProcessRewriter.RewriteProcess(&p); err != nil {
 			return err
 		}
 		out, err := json.MarshalIndent(&p, "", "  ")
@@ -215,7 +215,7 @@ func (w *Wrapper) rewriteExec(c *Exec, tmpPath *string) error {
 			p.User.AdditionalGids[i] = uint32(g)
 		}
 	}
-	if err := (*w.ProcessRewriter).RewriteProcess(&p); err != nil {
+	if err := w.ProcessRewriter.RewriteProcess(&p); err != nil {
 		return err
 	}
 	f, err := os.CreateTemp("", "process-*.json")

@@ -8,6 +8,7 @@ import (
 	"reflect"
 
 	"github.com/TheGrizzlyDev/vino/internal/pkg/runc"
+	"github.com/TheGrizzlyDev/vino/internal/pkg/vino"
 )
 
 type VinoOptions struct {
@@ -96,7 +97,14 @@ func RuncMain(args []string) error {
 		return fmt.Errorf("failed to create delegating client: %w", err)
 	}
 
-	w := runc.Wrapper{Delegate: cli}
+	bundleRewriter := &vino.BundleRewriter{}
+	processRewriter := &vino.ProcessRewriter{}
+
+	w := runc.Wrapper{
+		BundleRewriter:  bundleRewriter,
+		ProcessRewriter: processRewriter,
+		Delegate:        cli,
+	}
 	if err := w.Run(cmd); err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
