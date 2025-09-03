@@ -1,6 +1,7 @@
 package dindutil
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -69,6 +70,16 @@ func readStdStreams(ctx context.Context, r io.Reader) (stdout, stderr bytes.Buff
 		return stdout, stderr, ctx.Err()
 	case e := <-done:
 		return stdout, stderr, e
+	}
+}
+
+func logStreamLines(t *testing.T, container, runtime, stream string, data []byte) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		t.Logf("container=%s runtime=%s stream=%s ts=%s msg=%q", container, runtime, stream, time.Now().Format(time.RFC3339Nano), scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		t.Logf("container=%s runtime=%s stream=%s ts=%s msg=%q", container, runtime, stream, time.Now().Format(time.RFC3339Nano), fmt.Sprintf("scanner error: %v", err))
 	}
 }
 
@@ -266,40 +277,54 @@ func ExecNoOutput(ctx context.Context, cont tc.Container, args ...string) (int, 
 // LogDelegatecLogs logs the contents of delegatec.log from the container.
 func LogDelegatecLogs(t *testing.T, ctx context.Context, cont tc.Container) {
 	t.Helper()
+	name, _ := cont.Name(ctx)
+	runtime := "delegatec"
 	execCtx, cancel := context.WithTimeout(ctx, dockerCmdTimeout)
 	defer cancel()
-	code, reader, err := cont.Exec(execCtx, []string{"cat", "/var/log/delegatec.log"})
+	code, reader, err := cont.Exec(execCtx, []string{"cat", "/var/log/delegatec.log"}, tcexec.Multiplexed())
 	if err != nil {
-		t.Logf("failed to read delegatec.log: %v", err)
+		t.Logf("container=%s runtime=%s stream=setup ts=%s msg=%q", name, runtime, time.Now().Format(time.RFC3339Nano), fmt.Sprintf("failed to read delegatec.log: %v", err))
 		return
 	}
 	if code != 0 {
-		t.Logf("failed to read delegatec.log: exit code %d", code)
+		t.Logf("container=%s runtime=%s stream=setup ts=%s msg=%q", name, runtime, time.Now().Format(time.RFC3339Nano), fmt.Sprintf("exit code %d", code))
 		return
 	}
-	out, _ := ReadAll(execCtx, reader)
-	t.Logf("--- delegatec.log ---\n%s\n--------------------", string(out))
+	stdout, stderr, err := readStdStreams(execCtx, reader)
+	if err != nil {
+		t.Logf("container=%s runtime=%s stream=setup ts=%s msg=%q", name, runtime, time.Now().Format(time.RFC3339Nano), fmt.Sprintf("split streams: %v", err))
+		return
+	}
+	logStreamLines(t, name, runtime, "stdout", stdout.Bytes())
+	logStreamLines(t, name, runtime, "stderr", stderr.Bytes())
 }
 
 // LogRuncLogs logs the runc logs from the container.
 func LogRuncLogs(t *testing.T, ctx context.Context, cont tc.Container) {
 	t.Helper()
+	name, _ := cont.Name(ctx)
+	runtime := "runc"
 	cmd := []string{"sh", "-c", "find /var/run/docker/containerd/daemon -name log.json -exec cat {} +"}
 	execCtx, cancel := context.WithTimeout(ctx, dockerCmdTimeout)
 	defer cancel()
-	code, reader, err := cont.Exec(execCtx, cmd)
+	code, reader, err := cont.Exec(execCtx, cmd, tcexec.Multiplexed())
 	if err != nil {
-		t.Logf("failed to read runc log: %v", err)
+		t.Logf("container=%s runtime=%s stream=setup ts=%s msg=%q", name, runtime, time.Now().Format(time.RFC3339Nano), fmt.Sprintf("failed to read runc log: %v", err))
 		return
 	}
 	if code != 0 {
-		t.Logf("failed to read runc log: exit code %d", code)
+		t.Logf("container=%s runtime=%s stream=setup ts=%s msg=%q", name, runtime, time.Now().Format(time.RFC3339Nano), fmt.Sprintf("exit code %d", code))
 		return
 	}
-	out, _ := ReadAll(execCtx, reader)
-	if len(out) == 0 {
-		t.Log("runc log empty")
+	stdout, stderr, err := readStdStreams(execCtx, reader)
+	if err != nil {
+		t.Logf("container=%s runtime=%s stream=setup ts=%s msg=%q", name, runtime, time.Now().Format(time.RFC3339Nano), fmt.Sprintf("split streams: %v", err))
 		return
 	}
-	t.Logf("--- runc log ---\n%s\n----------------", string(out))
+	if stdout.Len() == 0 && stderr.Len() == 0 {
+		t.Logf("container=%s runtime=%s stream=setup ts=%s msg=%q", name, runtime, time.Now().Format(time.RFC3339Nano), "runc log empty")
+		return
+	}
+	logStreamLines(t, name, runtime, "stdout", stdout.Bytes())
+	logStreamLines(t, name, runtime, "stderr", stderr.Bytes())
 }
