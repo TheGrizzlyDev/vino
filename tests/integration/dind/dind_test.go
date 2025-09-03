@@ -143,26 +143,46 @@ func TestRuntimeParity(t *testing.T) {
 	}
 
 	type caseFn func(*testing.T, context.Context, tc.Container, string) (int, string, error)
-	type verifyFn func(int, string, int, string) error
-	var defaultVerify = func(wantCode int) verifyFn {
+	type result struct {
+		stdout string
+		exit   int
+	}
+	type verifyFn func(map[string]result) error
+	var defaultVerify = func(results map[string]result) verifyFn {
 		return func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
-			runcOut = strings.TrimSpace(runcOut)
-			delegatecOut = strings.TrimSpace(delegatecOut)
-			if runcCode != delegatecCode || runcOut != delegatecOut {
-				return fmt.Errorf("mismatch: runc [%d] %q vs delegatec [%d] %q", runcCode, runcOut, delegatecCode, delegatecOut)
-			}
-			if runcCode != wantCode {
-				return fmt.Errorf("unexpected exit code: got %d want %d", runcCode, wantCode)
+			var lastRuntime *string
+			var lastResult *result
+			for runtime, result := range runtimes {
+				result.stdout = strings.TrimSpace(result.stdout)
+				if lastRuntime == nil {
+					if result.exit != wantCode {
+						return fmt.Errorf("unexpected exit code: got %d want %d", result.code, wantCode)
+					}
+					lastRuntime = &runtime
+					lastResult = &results
+					continue
+				}
+				if lastResult.exit != result.exit || lastResult.stdout != result.stdout {
+					return fmt.Errorf("mismatch: %s [%d] %q vs %s [%d] %q",
+						*lastRuntime,
+						lastResult.exit,
+						lastResult.stdout,
+						runtime,
+						result.exit,
+						result.stdout,
+					)
+				}
 			}
 			return nil
 		}
 	}
 	const cpContent = "hello from host"
 	cases := []struct {
-		name    string
-		fn      caseFn
-		verify  verifyFn
-		pretest func(*testing.T, context.Context, tc.Container)
+		name     string
+		runtimes []string
+		fn       caseFn
+		verify   verifyFn
+		pretest  func(*testing.T, context.Context, tc.Container)
 	}{
 		{
 			name: "echo",
