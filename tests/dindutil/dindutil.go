@@ -71,13 +71,38 @@ func StartDindContainer(ctx context.Context, t *testing.T, image, name string, r
 	return cont
 }
 
+// preloadImages loads the specified images into the DinD container if they are
+// not already present. Images are copied from the host by piping `docker save`
+// into `docker load` inside the container.
+func preloadImages(t *testing.T, name string, images []string) {
+	t.Helper()
+	for _, img := range images {
+		// Skip if the image already exists in the container.
+		if err := exec.Command("docker", "exec", name, "docker", "image", "inspect", img).Run(); err == nil {
+			continue
+		}
+		// Ensure the image exists on the host. If it doesn't, pull it first.
+		if err := exec.Command("docker", "image", "inspect", img).Run(); err != nil {
+			if out, err := exec.Command("docker", "pull", img).CombinedOutput(); err != nil {
+				t.Fatalf("failed to pull image %s: %v\n%s", img, err, string(out))
+			}
+		}
+
+		cmd := exec.Command("sh", "-c", fmt.Sprintf("docker save %s | docker exec -i %s docker load", img, name))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("failed to preload image %s: %v\n%s", img, err, string(out))
+		}
+	}
+}
+
 // Pool manages a set of DinD containers for parallel tests.
 type Pool struct {
 	ch chan tc.Container
 }
 
-// NewPool builds the DinD image and starts count containers, returning a pool.
-func NewPool(t *testing.T, count int) *Pool {
+// NewPool builds the DinD image, starts count containers, preloads the provided
+// images into each container, and returns a pool.
+func NewPool(t *testing.T, count int, images ...string) *Pool {
 	image := BuildDindImage(t)
 	reuse := os.Getenv("TESTCONTAINERS_REUSE_ENABLE") == "true"
 	p := &Pool{ch: make(chan tc.Container, count)}
@@ -87,8 +112,12 @@ func NewPool(t *testing.T, count int) *Pool {
 		go func(i int) {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			cont := StartDindContainer(ctx, t, image, fmt.Sprintf("vino-dind-%d", i), reuse)
+			name := fmt.Sprintf("vino-dind-%d", i)
+			cont := StartDindContainer(ctx, t, image, name, reuse)
 			cancel()
+			if len(images) > 0 {
+				preloadImages(t, name, images)
+			}
 			p.ch <- cont
 			if !reuse {
 				t.Cleanup(func(cont tc.Container) func() {
