@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime/pprof"
 	"strconv"
@@ -22,7 +21,8 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	tc "github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
-	"github.com/testcontainers/testcontainers-go/wait"
+
+	dindutil "github.com/TheGrizzlyDev/vino/tests/dindutil"
 )
 
 var dindParallel = flag.Int("dind.parallel", 4, "number of dind containers to run in parallel")
@@ -41,83 +41,8 @@ func logCriuCheck(t *testing.T, ctx context.Context, cont tc.Container) {
 	t.Logf("criu check exit code %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 }
 
-func buildDindImage(t *testing.T) string {
-	t.Helper()
-	rootDir, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatalf("failed to get root dir: %v", err)
-	}
-	image := "vino-dind-test"
-	cmd := exec.Command("docker", "build", "-t", image, "-f", filepath.Join(rootDir, "tests/integration/dind/Dockerfile"), rootDir)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("failed to build image: %v\n%s", err, string(out))
-	}
-	t.Log(string(out))
-	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "-f", image).Run() })
-	return image
-}
-
-func startDindContainer(ctx context.Context, t *testing.T, image, name string, reuse bool) tc.Container {
-	t.Helper()
-	req := tc.ContainerRequest{
-		Image:      image,
-		Name:       name,
-		Privileged: true,
-		WaitingFor: wait.ForLog("API listen on /var/run/docker.sock").WithStartupTimeout(2 * time.Minute),
-	}
-	gcr := tc.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
-	}
-	if reuse {
-		gcr.Reuse = true
-	}
-	cont, err := tc.GenericContainer(ctx, gcr)
-	if err != nil {
-		if cont != nil {
-			logReader, logErr := cont.Logs(ctx)
-			if logErr == nil {
-				out, _ := io.ReadAll(logReader)
-				t.Logf("container logs:\n%s", string(out))
-			}
-		}
-		t.Fatalf("failed to start container: %v", err)
-	}
-	if code, _, err := cont.Exec(ctx, []string{"sh", "-c", "echo module test > /go.mod"}); err != nil || code != 0 {
-		_ = cont.Terminate(ctx)
-		t.Fatalf("failed to create go.mod in container: %v (exit code %d)", err, code)
-	}
-	return cont
-}
-
 func TestRuntimeParity(t *testing.T) {
-	image := buildDindImage(t)
-	reuse := os.Getenv("TESTCONTAINERS_REUSE_ENABLE") == "true"
-	pool := make(chan tc.Container, *dindParallel)
-	var wg sync.WaitGroup
-	for i := 0; i < *dindParallel; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			cont := startDindContainer(ctx, t, image, fmt.Sprintf("vino-dind-%d", i), reuse)
-			cancel()
-			pool <- cont
-			if !reuse {
-				t.Cleanup(func(cont tc.Container) func() {
-					return func() {
-						ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-						defer cancel()
-						if err := cont.Terminate(ctx); err != nil {
-							fmt.Printf("failed to terminate container: %v\n", err)
-						}
-					}
-				}(cont))
-			}
-		}(i)
-	}
-	wg.Wait()
+	pool := dindutil.NewPool(t, *dindParallel)
 
 	// requireCheckpointSupport verifies that the host supports container
 	// checkpoint/restore by running `criu check` and `docker checkpoint ls`
@@ -126,18 +51,18 @@ func TestRuntimeParity(t *testing.T) {
 	// spurious failures when the kernel or Docker daemon lacks CRIU support.
 	requireCheckpointSupport := func(t *testing.T, ctx context.Context, cont tc.Container) {
 		t.Helper()
-		if code, out, serr, err := ExecNoOutput(ctx, cont, "criu", "check"); err != nil || code != 0 || strings.Contains(strings.ToLower(out+serr), "unsupported") {
+		if code, out, serr, err := dindutil.ExecNoOutput(ctx, cont, "criu", "check"); err != nil || code != 0 || strings.Contains(strings.ToLower(out+serr), "unsupported") {
 			t.Skipf("skipping checkpoint restore: criu check failed (exit %d): %v\nstdout:\n%s\nstderr:\n%s", code, err, out, serr)
 		}
 
 		cname := fmt.Sprintf("ckpt-precheck-%d", time.Now().UnixNano())
 		runCmd := []string{"docker", "run", "-d", "--name", cname, "alpine", "sleep", "infinity"}
-		if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil || code != 0 {
+		if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil || code != 0 {
 			t.Skipf("skipping checkpoint restore: failed to start dummy container: %v", err)
 		}
 		t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
 
-		if code, out, serr, err := ExecNoOutput(ctx, cont, "docker", "checkpoint", "ls", cname); err != nil || code != 0 || strings.Contains(strings.ToLower(out+serr), "unsupported") {
+		if code, out, serr, err := dindutil.ExecNoOutput(ctx, cont, "docker", "checkpoint", "ls", cname); err != nil || code != 0 || strings.Contains(strings.ToLower(out+serr), "unsupported") {
 			t.Skipf("skipping checkpoint restore: docker checkpoint ls failed (exit %d): %v\nstdout:\n%s\nstderr:\n%s", code, err, out, serr)
 		}
 	}
@@ -194,35 +119,35 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "echo",
 			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return RunDocker(ctx, cont, runtime, "alpine", "echo", "hello")
+				return dindutil.RunDocker(ctx, cont, runtime, "alpine", "echo", "hello")
 			},
 			verify: defaultVerify(0),
 		},
 		{
 			name: "false",
 			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return RunDocker(ctx, cont, runtime, "alpine", "false")
+				return dindutil.RunDocker(ctx, cont, runtime, "alpine", "false")
 			},
 			verify: defaultVerify(1),
 		},
 		{
 			name: "env",
 			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return RunDocker(ctx, cont, runtime, "-e", "FOO=bar", "alpine", "sh", "-c", "echo $FOO")
+				return dindutil.RunDocker(ctx, cont, runtime, "-e", "FOO=bar", "alpine", "sh", "-c", "echo $FOO")
 			},
 			verify: defaultVerify(0),
 		},
 		{
 			name: "volume",
 			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return RunDocker(ctx, cont, runtime, "-v", "/:/data", "alpine", "sh", "-c", "test -f /data/go.mod")
+				return dindutil.RunDocker(ctx, cont, runtime, "-v", "/:/data", "alpine", "sh", "-c", "test -f /data/go.mod")
 			},
 			verify: defaultVerify(0),
 		},
 		{
 			name: "workdir",
 			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return RunDocker(ctx, cont, runtime, "-w", "/tmp", "alpine", "pwd")
+				return dindutil.RunDocker(ctx, cont, runtime, "-w", "/tmp", "alpine", "pwd")
 			},
 			verify: defaultVerify(0),
 		},
@@ -244,22 +169,22 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "sleep", "infinity")
-				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
 				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
 
-				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "cp", "/tmp/in.txt", fmt.Sprintf("%s:/tmp/in.txt", cname)); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "cp", "/tmp/in.txt", fmt.Sprintf("%s:/tmp/in.txt", cname)); err != nil {
 					return code, "", fmt.Errorf("copy in: %w", err)
 				}
 
-				if code, out, serr, err := ExecNoOutput(ctx, cont, "docker", "exec", cname, "cat", "/tmp/in.txt"); err != nil || code != 0 {
+				if code, out, serr, err := dindutil.ExecNoOutput(ctx, cont, "docker", "exec", cname, "cat", "/tmp/in.txt"); err != nil || code != 0 {
 					return code, "", fmt.Errorf("exec cat: %v stdout:%s stderr:%s", err, out, serr)
 				} else if strings.TrimSpace(out) != cpContent {
 					return code, "", fmt.Errorf("container content mismatch: %q", out)
 				}
 
-				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "cp", fmt.Sprintf("%s:/tmp/in.txt", cname), "/tmp/out.txt"); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "cp", fmt.Sprintf("%s:/tmp/in.txt", cname), "/tmp/out.txt"); err != nil {
 					return code, "", fmt.Errorf("copy out: %w", err)
 				}
 				rc, err := cont.CopyFileFromContainer(ctx, "/tmp/out.txt")
@@ -296,7 +221,7 @@ func TestRuntimeParity(t *testing.T) {
 				}
 				run += " alpine cat\" /dev/null"
 				code, reader, err := cont.Exec(ctx, []string{"sh", "-c", run}, tcexec.Multiplexed())
-				_, _, _, _ = ExecNoOutput(ctx, cont, "docker", "rm", "-f", cname)
+				_, _, _, _ = dindutil.ExecNoOutput(ctx, cont, "docker", "rm", "-f", cname)
 				if err != nil {
 					return code, "", err
 				}
@@ -314,7 +239,7 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "tail", "-f", "/dev/null")
-				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
 				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
@@ -332,7 +257,7 @@ func TestRuntimeParity(t *testing.T) {
 			name: "memory limit",
 			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cmd := []string{"-m", "32m", "alpine", "sh", "-c", "cat /sys/fs/cgroup/memory.max"}
-				return RunDocker(ctx, cont, runtime, cmd...)
+				return dindutil.RunDocker(ctx, cont, runtime, cmd...)
 			},
 			verify: func(results map[string]result) error {
 				if err := defaultVerify(0)(results); err != nil {
@@ -351,7 +276,7 @@ func TestRuntimeParity(t *testing.T) {
 			name: "cpu limit",
 			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cmd := []string{"--cpus", "0.5", "alpine", "sh", "-c", "cat /sys/fs/cgroup/cpu.max"}
-				return RunDocker(ctx, cont, runtime, cmd...)
+				return dindutil.RunDocker(ctx, cont, runtime, cmd...)
 			},
 			verify: func(results map[string]result) error {
 				if err := defaultVerify(0)(results); err != nil {
@@ -433,7 +358,7 @@ func TestRuntimeParity(t *testing.T) {
 			name: "nginx port mapping",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := fmt.Sprintf("web-%s-%d", runtime, time.Now().UnixNano())
-				code, _, err := RunDocker(ctx, cont, runtime, "-d", "--name", cname, "-p", "8080:80", "nginx")
+				code, _, err := dindutil.RunDocker(ctx, cont, runtime, "-d", "--name", cname, "-p", "8080:80", "nginx")
 				if err != nil {
 					return code, "", fmt.Errorf("start nginx: %w", err)
 				}
@@ -473,7 +398,7 @@ func TestRuntimeParity(t *testing.T) {
 			name: "user and capabilities",
 			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cmd := []string{"--user", "1000:1000", "alpine", "sh", "-c", "id -u; id -g; cat /proc/self/status | grep CapEff; ping -c 1 127.0.0.1"}
-				return RunDocker(ctx, cont, runtime, cmd...)
+				return dindutil.RunDocker(ctx, cont, runtime, cmd...)
 			},
 			verify: func(results map[string]result) error {
 				verifyOut := func(runtime, out string) error {
@@ -517,20 +442,20 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "sh", "-c", "echo hello > /checkpoint_file; tail -f /dev/null")
-				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
 				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
 				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "checkpoint", "rm", cname, "ckpt"}) })
 
-				code, out, serr, err := ExecNoOutput(ctx, cont, "docker", "checkpoint", "create", "--debug", cname, "ckpt")
+				code, out, serr, err := dindutil.ExecNoOutput(ctx, cont, "docker", "checkpoint", "create", "--debug", cname, "ckpt")
 				t.Logf("docker checkpoint create stdout:\n%s", out)
 				t.Logf("docker checkpoint create stderr:\n%s", serr)
 				if err != nil {
 					return code, "", fmt.Errorf("create checkpoint: %w", err)
 				}
 
-				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "start", "--checkpoint", "ckpt", cname); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "start", "--checkpoint", "ckpt", cname); err != nil {
 					return code, "", fmt.Errorf("start from checkpoint: %w", err)
 				}
 
@@ -553,16 +478,16 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "sleep", "infinity")
-				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
 				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
 
-				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "pause", cname); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "pause", cname); err != nil {
 					return code, "", fmt.Errorf("pause container: %w", err)
 				}
 
-				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "unpause", cname); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "unpause", cname); err != nil {
 					return code, "", fmt.Errorf("unpause container: %w", err)
 				}
 
@@ -682,12 +607,12 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "sleep", "infinity")
-				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
 				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
 
-				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "kill", "--signal", "SIGKILL", cname); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "kill", "--signal", "SIGKILL", cname); err != nil {
 					return code, "", fmt.Errorf("kill container: %w", err)
 				}
 
@@ -719,12 +644,12 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "sleep", "infinity")
-				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
 				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
 
-				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "restart", cname); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "restart", cname); err != nil {
 					return code, "", fmt.Errorf("restart container: %w", err)
 				}
 
@@ -758,7 +683,7 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "sleep", "infinity")
-				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
 				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
@@ -766,7 +691,7 @@ func TestRuntimeParity(t *testing.T) {
 				inspectCmd := []string{"docker", "inspect", "--format", "{{.State.Health.Status}}", cname}
 				var status string
 				for i := 0; i < 10; i++ {
-					code, out, _, err := ExecNoOutput(ctx, cont, inspectCmd...)
+					code, out, _, err := dindutil.ExecNoOutput(ctx, cont, inspectCmd...)
 					if err == nil && code == 0 {
 						s := strings.TrimSpace(out)
 						if s == "healthy" || s == "unhealthy" {
@@ -798,7 +723,7 @@ func TestRuntimeParity(t *testing.T) {
 			name: "device mapping",
 			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cmd := []string{"--device", "/dev/null:/dev/testnull", "alpine", "sh", "-c", "echo hi > /dev/testnull && wc -c < /dev/testnull"}
-				return RunDocker(ctx, cont, runtime, cmd...)
+				return dindutil.RunDocker(ctx, cont, runtime, cmd...)
 			},
 			verify: func(results map[string]result) error {
 				if err := defaultVerify(0)(results); err != nil {
@@ -822,7 +747,7 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "hashicorp/http-echo", "-text", "hello", "-listen", ":8081")
-				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start server: %w", err)
 				}
 				defer cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
@@ -872,17 +797,17 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "sh", "-c", "echo hello > /committed && sleep infinity")
-				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
 				t.Cleanup(func() {
 					cont.Exec(ctx, []string{"docker", "rm", "-f", cname})
 					cont.Exec(ctx, []string{"docker", "rmi", "-f", imgName})
 				})
-				if code, _, _, err := ExecNoOutput(ctx, cont, "docker", "commit", cname, imgName); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "commit", cname, imgName); err != nil {
 					return code, "", fmt.Errorf("commit container: %w", err)
 				}
-				return RunDocker(ctx, cont, runtime, imgName, "cat", "/committed")
+				return dindutil.RunDocker(ctx, cont, runtime, imgName, "cat", "/committed")
 			},
 			verify: func(results map[string]result) error {
 				if err := defaultVerify(0)(results); err != nil {
@@ -907,7 +832,7 @@ func TestRuntimeParity(t *testing.T) {
 				}
 				// run a short-lived command with a known exit code
 				runCmd = append(runCmd, "alpine", "sh", "-c", "exit 7")
-				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
 
@@ -927,7 +852,7 @@ func TestRuntimeParity(t *testing.T) {
 					return code, "", fmt.Errorf("parse exit code: %w", err)
 				}
 
-				if rmCode, _, _, rmErr := ExecNoOutput(ctx, cont, "docker", "rm", cname); rmErr != nil {
+				if rmCode, _, _, rmErr := dindutil.ExecNoOutput(ctx, cont, "docker", "rm", cname); rmErr != nil {
 					return exitCode, "", fmt.Errorf("remove container exit %d: %w", rmCode, rmErr)
 				}
 
@@ -944,7 +869,7 @@ func TestRuntimeParity(t *testing.T) {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
 				runCmd = append(runCmd, "alpine", "sh", "-c", "for i in 1 2 3; do echo $i; sleep 1; done")
-				if code, _, _, err := ExecNoOutput(ctx, cont, runCmd...); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}
 				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
@@ -1044,8 +969,7 @@ func TestRuntimeParity(t *testing.T) {
 			}()
 			t.Parallel()
 
-			cont := <-pool
-			defer func() { pool <- cont }()
+			cont := pool.Acquire(t)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -1054,8 +978,8 @@ func TestRuntimeParity(t *testing.T) {
 				if t.Failed() {
 					logCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
-					LogDelegatecLogs(t, logCtx, cont)
-					LogRuncLogs(t, logCtx, cont)
+					dindutil.LogDelegatecLogs(t, logCtx, cont)
+					dindutil.LogRuncLogs(t, logCtx, cont)
 					logCriuCheck(t, logCtx, cont)
 				}
 			})
