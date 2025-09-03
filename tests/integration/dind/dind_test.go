@@ -192,7 +192,7 @@ func TestRuntimeParity(t *testing.T) {
 					return 0, "", fmt.Errorf("copy from container: %w", err)
 				}
 				defer rc.Close()
-				data, err := io.ReadAll(rc)
+				data, err := dindutil.ReadAll(ctx, rc)
 				if err != nil {
 					return 0, "", err
 				}
@@ -225,7 +225,7 @@ func TestRuntimeParity(t *testing.T) {
 				if err != nil {
 					return code, "", err
 				}
-				out, err := io.ReadAll(reader)
+				out, err := dindutil.ReadAll(ctx, reader)
 				return code, string(out), err
 			},
 			verify: defaultVerify(0),
@@ -248,7 +248,7 @@ func TestRuntimeParity(t *testing.T) {
 				if err != nil {
 					return code, "", err
 				}
-				data, err := io.ReadAll(reader)
+				data, err := dindutil.ReadAll(ctx, reader)
 				return code, string(data), err
 			},
 			verify: defaultVerify(0),
@@ -338,7 +338,7 @@ func TestRuntimeParity(t *testing.T) {
 				if err != nil {
 					return code, "", err
 				}
-				out, err := io.ReadAll(reader)
+				out, err := dindutil.ReadAll(ctx, reader)
 				return code, string(out), err
 			},
 			verify: func(results map[string]result) error {
@@ -374,7 +374,7 @@ func TestRuntimeParity(t *testing.T) {
 				for {
 					code, reader, err := cont.Exec(pollCtx, []string{"curl", "-fsSL", "--max-time", "1", "http://localhost:8080"}, tcexec.Multiplexed())
 					if err == nil && code == 0 {
-						data, err := io.ReadAll(reader)
+						data, err := dindutil.ReadAll(pollCtx, reader)
 						cleanup()
 						return code, string(data), err
 					}
@@ -464,7 +464,7 @@ func TestRuntimeParity(t *testing.T) {
 				if err != nil {
 					return code, "", err
 				}
-				data, err := io.ReadAll(reader)
+				data, err := dindutil.ReadAll(ctx, reader)
 				return code, string(data), err
 			},
 			verify: defaultVerify(0),
@@ -496,7 +496,7 @@ func TestRuntimeParity(t *testing.T) {
 				if err != nil {
 					return code, "", err
 				}
-				out, err := io.ReadAll(reader)
+				out, err := dindutil.ReadAll(ctx, reader)
 				return code, string(out), err
 			},
 			verify: defaultVerify(0),
@@ -525,7 +525,7 @@ func TestRuntimeParity(t *testing.T) {
 				if err != nil {
 					return code, "", err
 				}
-				out, err := io.ReadAll(reader)
+				out, err := dindutil.ReadAll(ctx, reader)
 				return code, string(out), err
 			},
 			verify: func(results map[string]result) error {
@@ -576,7 +576,7 @@ func TestRuntimeParity(t *testing.T) {
 					}
 					return lcode, "", err
 				}
-				out, err := io.ReadAll(reader)
+				out, err := dindutil.ReadAll(ctx, reader)
 				if err != nil {
 					return lcode, "", err
 				}
@@ -620,7 +620,7 @@ func TestRuntimeParity(t *testing.T) {
 				if err != nil {
 					return code, "", err
 				}
-				out, err := io.ReadAll(reader)
+				out, err := dindutil.ReadAll(ctx, reader)
 				if err != nil {
 					return code, "", err
 				}
@@ -658,7 +658,7 @@ func TestRuntimeParity(t *testing.T) {
 				if err != nil {
 					return code, "", err
 				}
-				out, err := io.ReadAll(reader)
+				out, err := dindutil.ReadAll(ctx, reader)
 				return code, string(out), err
 			},
 			verify: func(results map[string]result) error {
@@ -758,7 +758,7 @@ func TestRuntimeParity(t *testing.T) {
 				for {
 					code, reader, err := cont.Exec(pollCtx, []string{"curl", "-fsSL", "--max-time", "1", "http://localhost:8081"}, tcexec.Multiplexed())
 					if err == nil && code == 0 {
-						data, err := io.ReadAll(reader)
+						data, err := dindutil.ReadAll(pollCtx, reader)
 						return code, string(data), err
 					}
 					if err == nil {
@@ -840,7 +840,7 @@ func TestRuntimeParity(t *testing.T) {
 				if err != nil {
 					return code, "", err
 				}
-				out, err := io.ReadAll(reader)
+				out, err := dindutil.ReadAll(ctx, reader)
 				if err != nil {
 					return code, "", err
 				}
@@ -879,7 +879,7 @@ func TestRuntimeParity(t *testing.T) {
 				if err != nil {
 					return code, "", err
 				}
-				out, err := io.ReadAll(reader)
+				out, err := dindutil.ReadAll(ctx, reader)
 				if err != nil {
 					return code, "", err
 				}

@@ -19,6 +19,59 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
+const dockerCmdTimeout = 2 * time.Minute
+
+type ExecError struct {
+	Cmd      []string
+	ExitCode int
+	Stdout   string
+	Stderr   string
+	Err      error
+}
+
+func (e *ExecError) Error() string {
+	parts := []string{fmt.Sprintf("exec %v (exit code %d)", e.Cmd, e.ExitCode)}
+	if e.Stdout != "" {
+		parts = append(parts, fmt.Sprintf("stdout: %q", e.Stdout))
+	}
+	if e.Stderr != "" {
+		parts = append(parts, fmt.Sprintf("stderr: %q", e.Stderr))
+	}
+	if e.Err != nil {
+		parts = append(parts, e.Err.Error())
+	}
+	return strings.Join(parts, ": ")
+}
+
+func ReadAll(ctx context.Context, r io.Reader) ([]byte, error) {
+	var buf bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(&buf, r)
+		done <- err
+	}()
+	select {
+	case <-ctx.Done():
+		return buf.Bytes(), ctx.Err()
+	case err := <-done:
+		return buf.Bytes(), err
+	}
+}
+
+func readStdStreams(ctx context.Context, r io.Reader) (stdout, stderr bytes.Buffer, err error) {
+	done := make(chan error, 1)
+	go func() {
+		_, e := stdcopy.StdCopy(&stdout, &stderr, r)
+		done <- e
+	}()
+	select {
+	case <-ctx.Done():
+		return stdout, stderr, ctx.Err()
+	case e := <-done:
+		return stdout, stderr, e
+	}
+}
+
 // BuildDindImage builds the DinD test image and schedules its removal.
 func BuildDindImage(t *testing.T) string {
 	t.Helper()
@@ -27,13 +80,19 @@ func BuildDindImage(t *testing.T) string {
 		t.Fatalf("failed to get root dir: %v", err)
 	}
 	image := "vino-dind-test"
-	cmd := exec.Command("docker", "build", "-t", image, "-f", filepath.Join(rootDir, "tests/integration/dind/Dockerfile"), rootDir)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "build", "-t", image, "-f", filepath.Join(rootDir, "tests/integration/dind/Dockerfile"), rootDir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("failed to build image: %v\n%s", err, string(out))
 	}
 	t.Log(string(out))
-	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "-f", image).Run() })
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		_ = exec.CommandContext(ctx, "docker", "rmi", "-f", image).Run()
+	})
 	return image
 }
 
@@ -58,13 +117,15 @@ func StartDindContainer(ctx context.Context, t *testing.T, image, name string, r
 		if cont != nil {
 			logReader, logErr := cont.Logs(ctx)
 			if logErr == nil {
-				out, _ := io.ReadAll(logReader)
+				out, _ := ReadAll(ctx, logReader)
 				t.Logf("container logs:\n%s", string(out))
 			}
 		}
 		t.Fatalf("failed to start container: %v", err)
 	}
-	if code, _, err := cont.Exec(ctx, []string{"sh", "-c", "echo module test > /go.mod"}); err != nil || code != 0 {
+	execCtx, cancel := context.WithTimeout(ctx, dockerCmdTimeout)
+	defer cancel()
+	if code, _, err := cont.Exec(execCtx, []string{"sh", "-c", "echo module test > /go.mod"}); err != nil || code != 0 {
 		_ = cont.Terminate(ctx)
 		t.Fatalf("failed to create go.mod in container: %v (exit code %d)", err, code)
 	}
@@ -78,20 +139,33 @@ func preloadImages(t *testing.T, name string, images []string) {
 	t.Helper()
 	for _, img := range images {
 		// Skip if the image already exists in the container.
-		if err := exec.Command("docker", "exec", name, "docker", "image", "inspect", img).Run(); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		if err := exec.CommandContext(ctx, "docker", "exec", name, "docker", "image", "inspect", img).Run(); err == nil {
+			cancel()
 			continue
 		}
+		cancel()
 		// Ensure the image exists on the host. If it doesn't, pull it first.
-		if err := exec.Command("docker", "image", "inspect", img).Run(); err != nil {
-			if out, err := exec.Command("docker", "pull", img).CombinedOutput(); err != nil {
+		ctx, cancel = context.WithTimeout(context.Background(), time.Minute)
+		if err := exec.CommandContext(ctx, "docker", "image", "inspect", img).Run(); err != nil {
+			cancel()
+			ctxPull, cancelPull := context.WithTimeout(context.Background(), 5*time.Minute)
+			if out, err := exec.CommandContext(ctxPull, "docker", "pull", img).CombinedOutput(); err != nil {
+				cancelPull()
 				t.Fatalf("failed to pull image %s: %v\n%s", img, err, string(out))
 			}
+			cancelPull()
+		} else {
+			cancel()
 		}
 
-		cmd := exec.Command("sh", "-c", fmt.Sprintf("docker save %s | docker exec -i %s docker load", img, name))
+		ctxSave, cancelSave := context.WithTimeout(context.Background(), 5*time.Minute)
+		cmd := exec.CommandContext(ctxSave, "sh", "-c", fmt.Sprintf("docker save %s | docker exec -i %s docker load", img, name))
 		if out, err := cmd.CombinedOutput(); err != nil {
+			cancelSave()
 			t.Fatalf("failed to preload image %s: %v\n%s", img, err, string(out))
 		}
+		cancelSave()
 	}
 }
 
@@ -155,40 +229,36 @@ func RunDocker(ctx context.Context, cont tc.Container, runtime string, args ...s
 		cmd = append(cmd, "--runtime", runtime)
 	}
 	cmd = append(cmd, args...)
-	code, reader, err := cont.Exec(ctx, cmd, tcexec.Multiplexed())
-	if err != nil {
-		return code, "", err
+	execCtx, cancel := context.WithTimeout(ctx, dockerCmdTimeout)
+	defer cancel()
+	code, reader, err := cont.Exec(execCtx, cmd, tcexec.Multiplexed())
+	var stdout, stderr bytes.Buffer
+	if reader != nil {
+		stdout, stderr, err = readStdStreams(execCtx, reader)
 	}
-	out, err := io.ReadAll(reader)
-	return code, string(out), err
+	if err != nil {
+		return code, stdout.String(), &ExecError{Cmd: cmd, ExitCode: code, Stdout: stdout.String(), Stderr: stderr.String(), Err: err}
+	}
+	if code != 0 {
+		return code, stdout.String(), &ExecError{Cmd: cmd, ExitCode: code, Stdout: stdout.String(), Stderr: stderr.String()}
+	}
+	return code, stdout.String(), nil
 }
 
 // ExecNoOutput executes a command inside the container and collects stdout and stderr.
 func ExecNoOutput(ctx context.Context, cont tc.Container, args ...string) (int, string, string, error) {
-	code, reader, err := cont.Exec(ctx, args, tcexec.Multiplexed())
+	execCtx, cancel := context.WithTimeout(ctx, dockerCmdTimeout)
+	defer cancel()
+	code, reader, err := cont.Exec(execCtx, args, tcexec.Multiplexed())
 	var stdout, stderr bytes.Buffer
 	if reader != nil {
-		stdcopy.StdCopy(&stdout, &stderr, reader)
+		stdout, stderr, err = readStdStreams(execCtx, reader)
 	}
 	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = strings.TrimSpace(stdout.String())
-		}
-		if msg != "" {
-			err = fmt.Errorf("%s: %w", msg, err)
-		}
-		return code, stdout.String(), stderr.String(), err
+		return code, stdout.String(), stderr.String(), &ExecError{Cmd: args, ExitCode: code, Stdout: stdout.String(), Stderr: stderr.String(), Err: err}
 	}
 	if code != 0 {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = strings.TrimSpace(stdout.String())
-		}
-		if msg == "" {
-			msg = fmt.Sprintf("exit code %d", code)
-		}
-		return code, stdout.String(), stderr.String(), fmt.Errorf("%s", msg)
+		return code, stdout.String(), stderr.String(), &ExecError{Cmd: args, ExitCode: code, Stdout: stdout.String(), Stderr: stderr.String()}
 	}
 	return code, stdout.String(), stderr.String(), nil
 }
@@ -196,7 +266,9 @@ func ExecNoOutput(ctx context.Context, cont tc.Container, args ...string) (int, 
 // LogDelegatecLogs logs the contents of delegatec.log from the container.
 func LogDelegatecLogs(t *testing.T, ctx context.Context, cont tc.Container) {
 	t.Helper()
-	code, reader, err := cont.Exec(ctx, []string{"cat", "/var/log/delegatec.log"})
+	execCtx, cancel := context.WithTimeout(ctx, dockerCmdTimeout)
+	defer cancel()
+	code, reader, err := cont.Exec(execCtx, []string{"cat", "/var/log/delegatec.log"})
 	if err != nil {
 		t.Logf("failed to read delegatec.log: %v", err)
 		return
@@ -205,7 +277,7 @@ func LogDelegatecLogs(t *testing.T, ctx context.Context, cont tc.Container) {
 		t.Logf("failed to read delegatec.log: exit code %d", code)
 		return
 	}
-	out, _ := io.ReadAll(reader)
+	out, _ := ReadAll(execCtx, reader)
 	t.Logf("--- delegatec.log ---\n%s\n--------------------", string(out))
 }
 
@@ -213,7 +285,9 @@ func LogDelegatecLogs(t *testing.T, ctx context.Context, cont tc.Container) {
 func LogRuncLogs(t *testing.T, ctx context.Context, cont tc.Container) {
 	t.Helper()
 	cmd := []string{"sh", "-c", "find /var/run/docker/containerd/daemon -name log.json -exec cat {} +"}
-	code, reader, err := cont.Exec(ctx, cmd)
+	execCtx, cancel := context.WithTimeout(ctx, dockerCmdTimeout)
+	defer cancel()
+	code, reader, err := cont.Exec(execCtx, cmd)
 	if err != nil {
 		t.Logf("failed to read runc log: %v", err)
 		return
@@ -222,7 +296,7 @@ func LogRuncLogs(t *testing.T, ctx context.Context, cont tc.Container) {
 		t.Logf("failed to read runc log: exit code %d", code)
 		return
 	}
-	out, _ := io.ReadAll(reader)
+	out, _ := ReadAll(execCtx, reader)
 	if len(out) == 0 {
 		t.Log("runc log empty")
 		return
