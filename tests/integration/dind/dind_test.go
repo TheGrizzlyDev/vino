@@ -148,30 +148,37 @@ func TestRuntimeParity(t *testing.T) {
 		exit   int
 	}
 	type verifyFn func(map[string]result) error
-	var defaultVerify = func(results map[string]result) verifyFn {
-		return func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
-			var lastRuntime *string
-			var lastResult *result
-			for runtime, result := range runtimes {
-				result.stdout = strings.TrimSpace(result.stdout)
-				if lastRuntime == nil {
-					if result.exit != wantCode {
-						return fmt.Errorf("unexpected exit code: got %d want %d", result.code, wantCode)
+	var defaultVerify = func(wantCode int) verifyFn {
+		return func(results map[string]result) error {
+			var (
+				lastRuntime string
+				lastResult  result
+				seen        bool
+			)
+			for runtime, res := range results {
+				res.stdout = strings.TrimSpace(res.stdout)
+				if !seen {
+					if res.exit != wantCode {
+						return fmt.Errorf("unexpected exit code: got %d want %d", res.exit, wantCode)
 					}
-					lastRuntime = &runtime
-					lastResult = &results
+					lastRuntime = runtime
+					lastResult = res
+					seen = true
 					continue
 				}
-				if lastResult.exit != result.exit || lastResult.stdout != result.stdout {
+				if lastResult.exit != res.exit || lastResult.stdout != res.stdout {
 					return fmt.Errorf("mismatch: %s [%d] %q vs %s [%d] %q",
-						*lastRuntime,
+						lastRuntime,
 						lastResult.exit,
 						lastResult.stdout,
 						runtime,
-						result.exit,
-						result.stdout,
+						res.exit,
+						res.stdout,
 					)
 				}
+			}
+			if !seen {
+				return fmt.Errorf("no results")
 			}
 			return nil
 		}
@@ -266,12 +273,15 @@ func TestRuntimeParity(t *testing.T) {
 				}
 				return 0, string(data), nil
 			},
-			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
-				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+			verify: func(results map[string]result) error {
+				if err := defaultVerify(0)(results); err != nil {
 					return err
 				}
-				if strings.TrimSpace(runcOut) != cpContent {
-					return fmt.Errorf("unexpected file content: %q", runcOut)
+				for _, r := range results {
+					if strings.TrimSpace(r.stdout) != cpContent {
+						return fmt.Errorf("unexpected file content: %q", r.stdout)
+					}
+					break
 				}
 				return nil
 			},
@@ -324,12 +334,15 @@ func TestRuntimeParity(t *testing.T) {
 				cmd := []string{"-m", "32m", "alpine", "sh", "-c", "cat /sys/fs/cgroup/memory.max"}
 				return RunDocker(ctx, cont, runtime, cmd...)
 			},
-			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
-				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+			verify: func(results map[string]result) error {
+				if err := defaultVerify(0)(results); err != nil {
 					return err
 				}
-				if strings.TrimSpace(runcOut) != "33554432" {
-					return fmt.Errorf("unexpected memory limit: %s", strings.TrimSpace(runcOut))
+				for _, r := range results {
+					if strings.TrimSpace(r.stdout) != "33554432" {
+						return fmt.Errorf("unexpected memory limit: %s", strings.TrimSpace(r.stdout))
+					}
+					break
 				}
 				return nil
 			},
@@ -340,12 +353,15 @@ func TestRuntimeParity(t *testing.T) {
 				cmd := []string{"--cpus", "0.5", "alpine", "sh", "-c", "cat /sys/fs/cgroup/cpu.max"}
 				return RunDocker(ctx, cont, runtime, cmd...)
 			},
-			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
-				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+			verify: func(results map[string]result) error {
+				if err := defaultVerify(0)(results); err != nil {
 					return err
 				}
-				if strings.TrimSpace(runcOut) != "50000 100000" {
-					return fmt.Errorf("unexpected cpu limit: %s", strings.TrimSpace(runcOut))
+				for _, r := range results {
+					if strings.TrimSpace(r.stdout) != "50000 100000" {
+						return fmt.Errorf("unexpected cpu limit: %s", strings.TrimSpace(r.stdout))
+					}
+					break
 				}
 				return nil
 			},
@@ -400,12 +416,15 @@ func TestRuntimeParity(t *testing.T) {
 				out, err := io.ReadAll(reader)
 				return code, string(out), err
 			},
-			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
-				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+			verify: func(results map[string]result) error {
+				if err := defaultVerify(0)(results); err != nil {
 					return err
 				}
-				if strings.TrimSpace(runcOut) != "33554432" {
-					return fmt.Errorf("unexpected memory limit: %s", strings.TrimSpace(runcOut))
+				for _, r := range results {
+					if strings.TrimSpace(r.stdout) != "33554432" {
+						return fmt.Errorf("unexpected memory limit: %s", strings.TrimSpace(r.stdout))
+					}
+					break
 				}
 				return nil
 			},
@@ -456,7 +475,7 @@ func TestRuntimeParity(t *testing.T) {
 				cmd := []string{"--user", "1000:1000", "alpine", "sh", "-c", "id -u; id -g; cat /proc/self/status | grep CapEff; ping -c 1 127.0.0.1"}
 				return RunDocker(ctx, cont, runtime, cmd...)
 			},
-			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
+			verify: func(results map[string]result) error {
 				verifyOut := func(runtime, out string) error {
 					if !strings.Contains(out, "1000\n1000") {
 						return fmt.Errorf("unexpected uid/gid output: %q", out)
@@ -466,14 +485,22 @@ func TestRuntimeParity(t *testing.T) {
 					}
 					return nil
 				}
-				if err := verifyOut("runc", runcOut); err != nil {
-					return err
-				}
-				if err := verifyOut("delegatec", delegatecOut); err != nil {
-					return err
-				}
-				if runcCode != delegatecCode {
-					return fmt.Errorf("mismatch: runc [%d] vs delegatec [%d]", runcCode, delegatecCode)
+				var (
+					lastRuntime string
+					lastExit    *int
+				)
+				for runtime, res := range results {
+					if err := verifyOut(runtime, res.stdout); err != nil {
+						return err
+					}
+					if lastExit == nil {
+						lastRuntime = runtime
+						lastExit = &res.exit
+						continue
+					}
+					if *lastExit != res.exit {
+						return fmt.Errorf("mismatch: %s [%d] vs %s [%d]", lastRuntime, *lastExit, runtime, res.exit)
+					}
 				}
 				return nil
 			},
@@ -576,13 +603,23 @@ func TestRuntimeParity(t *testing.T) {
 				out, err := io.ReadAll(reader)
 				return code, string(out), err
 			},
-			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
-				if runcCode != delegatecCode || runcCode != 0 {
-					return fmt.Errorf("unexpected exit code: runc %d delegatec %d", runcCode, delegatecCode)
-				}
-				for name, out := range map[string]string{"runc": runcOut, "delegatec": delegatecOut} {
-					if !strings.Contains(out, "sleep") {
-						return fmt.Errorf("%s output missing 'sleep': %q", name, out)
+			verify: func(results map[string]result) error {
+				var (
+					lastRuntime string
+					lastExit    *int
+				)
+				for runtime, res := range results {
+					if lastExit == nil {
+						lastRuntime = runtime
+						lastExit = &res.exit
+					} else if *lastExit != res.exit {
+						return fmt.Errorf("unexpected exit code: %s %d vs %s %d", lastRuntime, *lastExit, runtime, res.exit)
+					}
+					if res.exit != 0 {
+						return fmt.Errorf("unexpected exit code: %s %d", runtime, res.exit)
+					}
+					if !strings.Contains(res.stdout, "sleep") {
+						return fmt.Errorf("%s output missing 'sleep': %q", runtime, res.stdout)
 					}
 				}
 				return nil
@@ -623,12 +660,15 @@ func TestRuntimeParity(t *testing.T) {
 				}
 				return code, string(out), nil
 			},
-			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
-				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+			verify: func(results map[string]result) error {
+				if err := defaultVerify(0)(results); err != nil {
 					return err
 				}
-				if strings.TrimSpace(runcOut) != "stdout\nstderr" {
-					return fmt.Errorf("unexpected logs: %q", runcOut)
+				for _, r := range results {
+					if strings.TrimSpace(r.stdout) != "stdout\nstderr" {
+						return fmt.Errorf("unexpected logs: %q", r.stdout)
+					}
+					break
 				}
 				return nil
 			},
@@ -696,12 +736,15 @@ func TestRuntimeParity(t *testing.T) {
 				out, err := io.ReadAll(reader)
 				return code, string(out), err
 			},
-			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
-				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+			verify: func(results map[string]result) error {
+				if err := defaultVerify(0)(results); err != nil {
 					return err
 				}
-				if strings.TrimSpace(runcOut) != "restarted" {
-					return fmt.Errorf("unexpected output: %q", runcOut)
+				for _, r := range results {
+					if strings.TrimSpace(r.stdout) != "restarted" {
+						return fmt.Errorf("unexpected output: %q", r.stdout)
+					}
+					break
 				}
 				return nil
 			},
@@ -738,12 +781,15 @@ func TestRuntimeParity(t *testing.T) {
 				}
 				return 0, status, nil
 			},
-			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
-				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+			verify: func(results map[string]result) error {
+				if err := defaultVerify(0)(results); err != nil {
 					return err
 				}
-				if strings.TrimSpace(runcOut) != "healthy" {
-					return fmt.Errorf("unexpected health status: %q", runcOut)
+				for _, r := range results {
+					if strings.TrimSpace(r.stdout) != "healthy" {
+						return fmt.Errorf("unexpected health status: %q", r.stdout)
+					}
+					break
 				}
 				return nil
 			},
@@ -754,12 +800,15 @@ func TestRuntimeParity(t *testing.T) {
 				cmd := []string{"--device", "/dev/null:/dev/testnull", "alpine", "sh", "-c", "echo hi > /dev/testnull && wc -c < /dev/testnull"}
 				return RunDocker(ctx, cont, runtime, cmd...)
 			},
-			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
-				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+			verify: func(results map[string]result) error {
+				if err := defaultVerify(0)(results); err != nil {
 					return err
 				}
-				if strings.TrimSpace(runcOut) != "0" {
-					return fmt.Errorf("unexpected output: %q", runcOut)
+				for _, r := range results {
+					if strings.TrimSpace(r.stdout) != "0" {
+						return fmt.Errorf("unexpected output: %q", r.stdout)
+					}
+					break
 				}
 				return nil
 			},
@@ -800,12 +849,15 @@ func TestRuntimeParity(t *testing.T) {
 					}
 				}
 			},
-			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
-				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+			verify: func(results map[string]result) error {
+				if err := defaultVerify(0)(results); err != nil {
 					return err
 				}
-				if strings.TrimSpace(runcOut) != "hello" {
-					return fmt.Errorf("unexpected response: %q", runcOut)
+				for _, r := range results {
+					if strings.TrimSpace(r.stdout) != "hello" {
+						return fmt.Errorf("unexpected response: %q", r.stdout)
+					}
+					break
 				}
 				return nil
 			},
@@ -832,12 +884,15 @@ func TestRuntimeParity(t *testing.T) {
 				}
 				return RunDocker(ctx, cont, runtime, imgName, "cat", "/committed")
 			},
-			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
-				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+			verify: func(results map[string]result) error {
+				if err := defaultVerify(0)(results); err != nil {
 					return err
 				}
-				if strings.TrimSpace(runcOut) != "hello" {
-					return fmt.Errorf("unexpected output: %q", runcOut)
+				for _, r := range results {
+					if strings.TrimSpace(r.stdout) != "hello" {
+						return fmt.Errorf("unexpected output: %q", r.stdout)
+					}
+					break
 				}
 				return nil
 			},
@@ -905,12 +960,15 @@ func TestRuntimeParity(t *testing.T) {
 				}
 				return code, string(out), nil
 			},
-			verify: func(runcCode int, runcOut string, delegatecCode int, delegatecOut string) error {
-				if err := defaultVerify(0)(runcCode, runcOut, delegatecCode, delegatecOut); err != nil {
+			verify: func(results map[string]result) error {
+				if err := defaultVerify(0)(results); err != nil {
 					return err
 				}
-				if strings.TrimSpace(runcOut) != "1\n2\n3" {
-					return fmt.Errorf("unexpected output: %q", runcOut)
+				for _, r := range results {
+					if strings.TrimSpace(r.stdout) != "1\n2\n3" {
+						return fmt.Errorf("unexpected output: %q", r.stdout)
+					}
+					break
 				}
 				return nil
 			},
@@ -1006,36 +1064,19 @@ func TestRuntimeParity(t *testing.T) {
 				c.pretest(t, ctx, cont)
 			}
 
-			type result struct {
-				code int
-				out  string
-				err  error
+			runtimes := c.runtimes
+			if len(runtimes) == 0 {
+				runtimes = []string{"runc", "delegatec"}
 			}
-			var runcRes, delegRes result
-			var wg sync.WaitGroup
-			wg.Add(2)
-			go func() {
-				defer wg.Done()
-				runcRes.code, runcRes.out, runcRes.err = c.fn(t, ctx, cont, "runc")
-			}()
-			go func() {
-				defer wg.Done()
-				delegRes.code, delegRes.out, delegRes.err = c.fn(t, ctx, cont, "delegatec")
-			}()
-			wg.Wait()
-
-			if runcRes.err != nil {
-				t.Fatalf("runc exec failed: %v", runcRes.err)
+			results := make(map[string]result, len(runtimes))
+			for _, rt := range runtimes {
+				code, out, err := c.fn(t, ctx, cont, rt)
+				if err != nil {
+					t.Fatalf("%s exec failed: %v", rt, err)
+				}
+				results[rt] = result{stdout: out, exit: code}
 			}
-			if delegRes.err != nil {
-				t.Fatalf("delegatec exec failed: %v", delegRes.err)
-			}
-			t.Logf("runc exited with %d", runcRes.code)
-			t.Logf("runc output:\n%s", runcRes.out)
-			t.Logf("delegatec exited with %d", delegRes.code)
-			t.Logf("delegatec output:\n%s", delegRes.out)
-
-			if err := c.verify(runcRes.code, runcRes.out, delegRes.code, delegRes.out); err != nil {
+			if err := c.verify(results); err != nil {
 				t.Fatal(err)
 			}
 		})
