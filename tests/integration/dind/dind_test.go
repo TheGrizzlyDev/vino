@@ -29,7 +29,7 @@ var dindParallel = flag.Int("dind.parallel", 4, "number of dind containers to ru
 
 func logCriuCheck(t *testing.T, ctx context.Context, cont tc.Container) {
 	t.Helper()
-	code, reader, err := cont.Exec(ctx, []string{"criu", "check"}, tcexec.Multiplexed())
+	code, reader, err := cont.Exec(ctx, []string{"criu", "check"})
 	if err != nil {
 		t.Logf("failed to run criu check: %v", err)
 		return

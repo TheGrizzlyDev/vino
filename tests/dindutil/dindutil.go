@@ -16,7 +16,6 @@ import (
 
 	"github.com/docker/docker/pkg/stdcopy"
 	tc "github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
@@ -242,7 +241,7 @@ func RunDocker(ctx context.Context, cont tc.Container, runtime string, args ...s
 	cmd = append(cmd, args...)
 	execCtx, cancel := context.WithTimeout(ctx, dockerCmdTimeout)
 	defer cancel()
-	code, reader, err := cont.Exec(execCtx, cmd, tcexec.Multiplexed())
+	code, reader, err := cont.Exec(execCtx, cmd)
 	var stdout, stderr bytes.Buffer
 	if reader != nil {
 		stdout, stderr, err = readStdStreams(execCtx, reader)
@@ -260,7 +259,7 @@ func RunDocker(ctx context.Context, cont tc.Container, runtime string, args ...s
 func ExecNoOutput(ctx context.Context, cont tc.Container, args ...string) (int, string, string, error) {
 	execCtx, cancel := context.WithTimeout(ctx, dockerCmdTimeout)
 	defer cancel()
-	code, reader, err := cont.Exec(execCtx, args, tcexec.Multiplexed())
+	code, reader, err := cont.Exec(execCtx, args)
 	var stdout, stderr bytes.Buffer
 	if reader != nil {
 		stdout, stderr, err = readStdStreams(execCtx, reader)
@@ -281,7 +280,7 @@ func LogDelegatecLogs(t *testing.T, ctx context.Context, cont tc.Container) {
 	runtime := "delegatec"
 	execCtx, cancel := context.WithTimeout(ctx, dockerCmdTimeout)
 	defer cancel()
-	code, reader, err := cont.Exec(execCtx, []string{"cat", "/var/log/delegatec.log"}, tcexec.Multiplexed())
+	code, reader, err := cont.Exec(execCtx, []string{"cat", "/var/log/delegatec.log"})
 	if err != nil {
 		t.Logf("container=%s runtime=%s stream=setup ts=%s msg=%q", name, runtime, time.Now().Format(time.RFC3339Nano), fmt.Sprintf("failed to read delegatec.log: %v", err))
 		return
@@ -307,7 +306,7 @@ func LogRuncLogs(t *testing.T, ctx context.Context, cont tc.Container) {
 	cmd := []string{"sh", "-c", "find /var/run/docker/containerd/daemon -name log.json -exec cat {} +"}
 	execCtx, cancel := context.WithTimeout(ctx, dockerCmdTimeout)
 	defer cancel()
-	code, reader, err := cont.Exec(execCtx, cmd, tcexec.Multiplexed())
+	code, reader, err := cont.Exec(execCtx, cmd)
 	if err != nil {
 		t.Logf("container=%s runtime=%s stream=setup ts=%s msg=%q", name, runtime, time.Now().Format(time.RFC3339Nano), fmt.Sprintf("failed to read runc log: %v", err))
 		return
