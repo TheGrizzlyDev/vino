@@ -42,7 +42,7 @@ func logCriuCheck(t *testing.T, ctx context.Context, cont tc.Container) {
 }
 
 func TestRuntimeParity(t *testing.T) {
-	pool := dindutil.NewPool(t, *dindParallel, "alpine")
+	pool := dindutil.NewPool(t, *dindParallel, "alpine:latest", "nginx:latest")
 
 	// requireCheckpointSupport verifies that the host supports container
 	// checkpoint/restore by running `criu check` and `docker checkpoint ls`
