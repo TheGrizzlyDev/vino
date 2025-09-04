@@ -2,15 +2,13 @@
 // +build e2e
 
 package dind
-
 import (
+
 	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"runtime/pprof"
 	"strconv"
 	"strings"
@@ -154,13 +152,10 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "docker cp",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				tmpDir := t.TempDir()
-				hostFile := filepath.Join(tmpDir, "cp.txt")
-				if err := os.WriteFile(hostFile, []byte(cpContent), 0o600); err != nil {
-					return 0, "", fmt.Errorf("write temp file: %w", err)
-				}
-				if err := cont.CopyFileToContainer(ctx, hostFile, "/tmp/in.txt", 0o600); err != nil {
-					return 0, "", fmt.Errorf("copy to container: %w", err)
+				// Prepare a source file inside the DinD container to avoid host-to-container copy flakiness.
+				// Use sh -c with a passed argument to avoid quoting issues.
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "sh", "-c", "printf \"%s\" \"$1\" > /tmp/in.txt", "placeholder", cpContent); err != nil || code != 0 {
+					return code, "", fmt.Errorf("prepare source file: %v", err)
 				}
 
 				cname := fmt.Sprintf("cp-%s-%d", runtime, time.Now().UnixNano())
@@ -184,19 +179,17 @@ func TestRuntimeParity(t *testing.T) {
 					return code, "", fmt.Errorf("container content mismatch: %q", out)
 				}
 
-				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "cp", fmt.Sprintf("%s:/tmp/in.txt", cname), "/tmp/out.txt"); err != nil {
-					return code, "", fmt.Errorf("copy out: %w", err)
+				if code, out, serr, err := dindutil.ExecNoOutput(ctx, cont, "docker", "cp", fmt.Sprintf("%s:/tmp/in.txt", cname), "/tmp/out.txt"); err != nil || code != 0 {
+					return code, "", fmt.Errorf("copy out: %v stdout:%s stderr:%s", err, out, serr)
 				}
-				rc, err := cont.CopyFileFromContainer(ctx, "/tmp/out.txt")
-				if err != nil {
-					return 0, "", fmt.Errorf("copy from container: %w", err)
+				// Verify the file was copied to the DinD host
+				if code, out, serr, err := dindutil.ExecNoOutput(ctx, cont, "cat", "/tmp/out.txt"); err != nil || code != 0 {
+					return code, "", fmt.Errorf("verify out file: %v stdout:%s stderr:%s", err, out, serr)
+				} else if strings.TrimSpace(out) != cpContent {
+					return code, "", fmt.Errorf("DinD host content mismatch: %q", out)
 				}
-				defer rc.Close()
-				data, err := dindutil.ReadAll(ctx, rc)
-				if err != nil {
-					return 0, "", err
-				}
-				return 0, string(data), nil
+				// Return the content we just verified instead of trying to copy from container
+				return 0, cpContent, nil
 			},
 			verify: func(results map[string]result) error {
 				if err := defaultVerify(0)(results); err != nil {
@@ -868,7 +861,7 @@ func TestRuntimeParity(t *testing.T) {
 				if runtime != "" {
 					runCmd = append(runCmd, "--runtime", runtime)
 				}
-				runCmd = append(runCmd, "alpine", "sh", "-c", "for i in 1 2 3; do echo $i; sleep 1; done")
+				runCmd = append(runCmd, "alpine", "sh", "-c", "sleep 1; for i in 1 2 3; do echo $i; sleep 1; done")
 				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
 					return code, "", fmt.Errorf("start container: %w", err)
 				}

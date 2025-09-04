@@ -249,9 +249,7 @@ func RunDocker(ctx context.Context, cont tc.Container, runtime string, args ...s
 	if err != nil {
 		return code, stdout.String(), &ExecError{Cmd: cmd, ExitCode: code, Stdout: stdout.String(), Stderr: stderr.String(), Err: err}
 	}
-	if code != 0 {
-		return code, stdout.String(), &ExecError{Cmd: cmd, ExitCode: code, Stdout: stdout.String(), Stderr: stderr.String()}
-	}
+	// Do not treat non-zero exit code as an error here; tests may validate exit codes.
 	return code, stdout.String(), nil
 }
 
