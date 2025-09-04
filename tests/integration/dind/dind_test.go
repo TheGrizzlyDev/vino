@@ -21,6 +21,7 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 
 	dindutil "github.com/TheGrizzlyDev/vino/tests/dindutil"
+	"github.com/TheGrizzlyDev/vino/tests/testutil"
 )
 
 var dindParallel = flag.Int("dind.parallel", 4, "number of dind containers to run in parallel")
@@ -66,10 +67,7 @@ func TestRuntimeParity(t *testing.T) {
 	}
 
 	type caseFn func(*testing.T, context.Context, tc.Container, string) (int, string, error)
-	type result struct {
-		stdout string
-		exit   int
-	}
+	type result = testutil.Result
 	type verifyFn func(map[string]result) error
 	var defaultVerify = func(wantCode int) verifyFn {
 		return func(results map[string]result) error {
@@ -79,24 +77,24 @@ func TestRuntimeParity(t *testing.T) {
 				seen        bool
 			)
 			for runtime, res := range results {
-				res.stdout = strings.TrimSpace(res.stdout)
+				res.Output = strings.TrimSpace(res.Output)
 				if !seen {
-					if res.exit != wantCode {
-						return fmt.Errorf("unexpected exit code: got %d want %d", res.exit, wantCode)
+					if res.ExitCode != wantCode {
+						return fmt.Errorf("unexpected exit code: got %d want %d", res.ExitCode, wantCode)
 					}
 					lastRuntime = runtime
 					lastResult = res
 					seen = true
 					continue
 				}
-				if lastResult.exit != res.exit || lastResult.stdout != res.stdout {
+				if lastResult.ExitCode != res.ExitCode || lastResult.Output != res.Output {
 					return fmt.Errorf("mismatch: %s [%d] %q vs %s [%d] %q",
 						lastRuntime,
-						lastResult.exit,
-						lastResult.stdout,
+						lastResult.ExitCode,
+						lastResult.Output,
 						runtime,
-						res.exit,
-						res.stdout,
+						res.ExitCode,
+						res.Output,
 					)
 				}
 			}
@@ -114,41 +112,11 @@ func TestRuntimeParity(t *testing.T) {
 		verify   verifyFn
 		pretest  func(*testing.T, context.Context, tc.Container)
 	}{
-		{
-			name: "echo",
-			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return dindutil.RunDocker(ctx, cont, runtime, "alpine", "echo", "hello")
-			},
-			verify: defaultVerify(0),
-		},
-		{
-			name: "false",
-			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return dindutil.RunDocker(ctx, cont, runtime, "alpine", "false")
-			},
-			verify: defaultVerify(1),
-		},
-		{
-			name: "env",
-			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return dindutil.RunDocker(ctx, cont, runtime, "-e", "FOO=bar", "alpine", "sh", "-c", "echo $FOO")
-			},
-			verify: defaultVerify(0),
-		},
-		{
-			name: "volume",
-			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return dindutil.RunDocker(ctx, cont, runtime, "-v", "/:/data", "alpine", "sh", "-c", "test -f /data/go.mod")
-			},
-			verify: defaultVerify(0),
-		},
-		{
-			name: "workdir",
-			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				return dindutil.RunDocker(ctx, cont, runtime, "-w", "/tmp", "alpine", "pwd")
-			},
-			verify: defaultVerify(0),
-		},
+		{name: "echo", fn: testutil.SimpleDockerRun("alpine", "echo", "hello"), verify: defaultVerify(0)},
+		{name: "false", fn: testutil.SimpleDockerRun("alpine", "false"), verify: defaultVerify(1)},
+		{name: "env", fn: testutil.SimpleDockerRun("-e", "FOO=bar", "alpine", "sh", "-c", "echo $FOO"), verify: defaultVerify(0)},
+		{name: "volume", fn: testutil.SimpleDockerRun("-v", "/:/data", "alpine", "sh", "-c", "test -f /data/go.mod"), verify: defaultVerify(0)},
+		{name: "workdir", fn: testutil.SimpleDockerRun("-w", "/tmp", "alpine", "pwd"), verify: defaultVerify(0)},
 		{
 			name: "docker cp",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
@@ -196,8 +164,8 @@ func TestRuntimeParity(t *testing.T) {
 					return err
 				}
 				for _, r := range results {
-					if strings.TrimSpace(r.stdout) != cpContent {
-						return fmt.Errorf("unexpected file content: %q", r.stdout)
+					if strings.TrimSpace(r.Output) != cpContent {
+						return fmt.Errorf("unexpected file content: %q", r.Output)
 					}
 					break
 				}
@@ -226,127 +194,14 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "exec after run",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("bgtest-%s-%d", runtime, time.Now().UnixNano())
-				runCmd := []string{"docker", "run", "-d", "--name", cname}
-				if runtime != "" {
-					runCmd = append(runCmd, "--runtime", runtime)
-				}
-				runCmd = append(runCmd, "alpine", "tail", "-f", "/dev/null")
-				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
-					return code, "", fmt.Errorf("start container: %w", err)
-				}
-				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
-				execCmd := []string{"docker", "exec", cname, "sh", "-c", "echo hello"}
-				code, reader, err := cont.Exec(ctx, execCmd, tcexec.Multiplexed())
-				if err != nil {
-					return code, "", err
-				}
-				data, err := dindutil.ReadAll(ctx, reader)
-				return code, string(data), err
+				cname := testutil.CreateNamedContainer(t, ctx, cont, runtime, "bgtest", "alpine", "tail", "-f", "/dev/null")
+				return testutil.DockerExec(ctx, cont, cname, "sh", "-c", "echo hello")
 			},
 			verify: defaultVerify(0),
 		},
-		{
-			name: "memory limit",
-			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cmd := []string{"-m", "32m", "alpine", "sh", "-c", "cat /sys/fs/cgroup/memory.max"}
-				return dindutil.RunDocker(ctx, cont, runtime, cmd...)
-			},
-			verify: func(results map[string]result) error {
-				if err := defaultVerify(0)(results); err != nil {
-					return err
-				}
-				for _, r := range results {
-					if strings.TrimSpace(r.stdout) != "33554432" {
-						return fmt.Errorf("unexpected memory limit: %s", strings.TrimSpace(r.stdout))
-					}
-					break
-				}
-				return nil
-			},
-		},
-		{
-			name: "cpu limit",
-			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cmd := []string{"--cpus", "0.5", "alpine", "sh", "-c", "cat /sys/fs/cgroup/cpu.max"}
-				return dindutil.RunDocker(ctx, cont, runtime, cmd...)
-			},
-			verify: func(results map[string]result) error {
-				if err := defaultVerify(0)(results); err != nil {
-					return err
-				}
-				for _, r := range results {
-					if strings.TrimSpace(r.stdout) != "50000 100000" {
-						return fmt.Errorf("unexpected cpu limit: %s", strings.TrimSpace(r.stdout))
-					}
-					break
-				}
-				return nil
-			},
-		},
-		{
-			name: "update limits",
-			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("update-%s-%d", runtime, time.Now().UnixNano())
-				runCmd := []string{"docker", "run", "-d", "--name", cname}
-				if runtime != "" {
-					runCmd = append(runCmd, "--runtime", runtime)
-				}
-				runCmd = append(runCmd, "alpine", "tail", "-f", "/dev/null")
-				if code, reader, err := cont.Exec(ctx, runCmd, tcexec.Multiplexed()); err != nil || code != 0 {
-					if err == nil {
-						io.Copy(io.Discard, reader)
-					}
-					return code, "", fmt.Errorf("start container: %w", err)
-				} else {
-					io.Copy(io.Discard, reader)
-				}
-				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
-
-				updateCmd := []string{"docker", "update", "--memory", "32m", "--memory-swap", "64m", cname}
-				code, reader, err := cont.Exec(ctx, updateCmd)
-				var stderr bytes.Buffer
-				if reader != nil {
-					stdcopy.StdCopy(io.Discard, &stderr, reader)
-				}
-				if code != 0 {
-					msg := strings.TrimSpace(stderr.String())
-					if err != nil {
-						if msg == "" {
-							return code, "", fmt.Errorf("update container: %w", err)
-						}
-						return code, "", fmt.Errorf("update container: %s: %w", msg, err)
-					}
-					if msg == "" {
-						msg = fmt.Sprintf("exit code %d", code)
-					}
-					return code, "", fmt.Errorf("update container: %s", msg)
-				}
-				if err != nil {
-					return code, "", fmt.Errorf("update container: %w", err)
-				}
-
-				execCmd := []string{"docker", "exec", cname, "cat", "/sys/fs/cgroup/memory.max"}
-				code, reader, err = cont.Exec(ctx, execCmd, tcexec.Multiplexed())
-				if err != nil {
-					return code, "", err
-				}
-				out, err := dindutil.ReadAll(ctx, reader)
-				return code, string(out), err
-			},
-			verify: func(results map[string]result) error {
-				if err := defaultVerify(0)(results); err != nil {
-					return err
-				}
-				for _, r := range results {
-					if strings.TrimSpace(r.stdout) != "33554432" {
-						return fmt.Errorf("unexpected memory limit: %s", strings.TrimSpace(r.stdout))
-					}
-					break
-				}
-				return nil
-			},
-		},
+		{name: "memory limit", fn: testutil.SimpleDockerRun("-m", "32m", "alpine", "sh", "-c", "cat /sys/fs/cgroup/memory.max"), verify: testutil.ExpectExactOutput(0, "33554432")},
+		{name: "cpu limit", fn: testutil.SimpleDockerRun("--cpus", "0.5", "alpine", "sh", "-c", "cat /sys/fs/cgroup/cpu.max"), verify: testutil.ExpectExactOutput(0, "50000 100000")},
+		{name: "update limits", fn: testutil.ContainerWithUpdate("update", []string{"docker", "update", "--memory", "32m", "--memory-swap", "64m"}, []string{"cat", "/sys/fs/cgroup/memory.max"}), verify: testutil.ExpectExactOutput(0, "33554432")},
 		{
 			name: "nginx port mapping",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
@@ -389,10 +244,7 @@ func TestRuntimeParity(t *testing.T) {
 		},
 		{
 			name: "user and capabilities",
-			fn: func(_ *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cmd := []string{"--user", "1000:1000", "alpine", "sh", "-c", "id -u; id -g; cat /proc/self/status | grep CapEff; ping -c 1 127.0.0.1"}
-				return dindutil.RunDocker(ctx, cont, runtime, cmd...)
-			},
+			fn: testutil.SimpleDockerRun("--user", "1000:1000", "alpine", "sh", "-c", "id -u; id -g; cat /proc/self/status | grep CapEff; ping -c 1 127.0.0.1"),
 			verify: func(results map[string]result) error {
 				verifyOut := func(runtime, out string) error {
 					if !strings.Contains(out, "1000\n1000") {
@@ -408,16 +260,16 @@ func TestRuntimeParity(t *testing.T) {
 					lastExit    *int
 				)
 				for runtime, res := range results {
-					if err := verifyOut(runtime, res.stdout); err != nil {
+					if err := verifyOut(runtime, res.Output); err != nil {
 						return err
 					}
 					if lastExit == nil {
 						lastRuntime = runtime
-						lastExit = &res.exit
+						lastExit = &res.ExitCode
 						continue
 					}
-					if *lastExit != res.exit {
-						return fmt.Errorf("mismatch: %s [%d] vs %s [%d]", lastRuntime, *lastExit, runtime, res.exit)
+					if *lastExit != res.ExitCode {
+						return fmt.Errorf("mismatch: %s [%d] vs %s [%d]", lastRuntime, *lastExit, runtime, res.ExitCode)
 					}
 				}
 				return nil
@@ -465,32 +317,17 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "pause/unpause",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("pause-%s-%d", runtime, time.Now().UnixNano())
-				runCmd := []string{"docker", "run", "-d", "--name", cname}
-				if runtime != "" {
-					runCmd = append(runCmd, "--runtime", runtime)
-				}
-				runCmd = append(runCmd, "alpine", "sleep", "infinity")
-				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
-					return code, "", fmt.Errorf("start container: %w", err)
-				}
-				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
-
-				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "pause", cname); err != nil {
+				cname := testutil.CreateNamedContainer(t, ctx, cont, runtime, "pause", "alpine", "sleep", "infinity")
+				
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "pause", cname); err != nil || code != 0 {
 					return code, "", fmt.Errorf("pause container: %w", err)
 				}
 
-				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "unpause", cname); err != nil {
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "unpause", cname); err != nil || code != 0 {
 					return code, "", fmt.Errorf("unpause container: %w", err)
 				}
 
-				execCmd := []string{"docker", "exec", cname, "sh", "-c", "echo hello"}
-				code, reader, err := cont.Exec(ctx, execCmd, tcexec.Multiplexed())
-				if err != nil {
-					return code, "", err
-				}
-				out, err := dindutil.ReadAll(ctx, reader)
-				return code, string(out), err
+				return testutil.DockerExec(ctx, cont, cname, "sh", "-c", "echo hello")
 			},
 			verify: defaultVerify(0),
 		},
@@ -529,15 +366,15 @@ func TestRuntimeParity(t *testing.T) {
 				for runtime, res := range results {
 					if lastExit == nil {
 						lastRuntime = runtime
-						lastExit = &res.exit
-					} else if *lastExit != res.exit {
-						return fmt.Errorf("unexpected exit code: %s %d vs %s %d", lastRuntime, *lastExit, runtime, res.exit)
+						lastExit = &res.ExitCode
+					} else if *lastExit != res.ExitCode {
+						return fmt.Errorf("unexpected exit code: %s %d vs %s %d", lastRuntime, *lastExit, runtime, res.ExitCode)
 					}
-					if res.exit != 0 {
-						return fmt.Errorf("unexpected exit code: %s %d", runtime, res.exit)
+					if res.ExitCode != 0 {
+						return fmt.Errorf("unexpected exit code: %s %d", runtime, res.ExitCode)
 					}
-					if !strings.Contains(res.stdout, "sleep") {
-						return fmt.Errorf("%s output missing 'sleep': %q", runtime, res.stdout)
+					if !strings.Contains(res.Output, "sleep") {
+						return fmt.Errorf("%s output missing 'sleep': %q", runtime, res.Output)
 					}
 				}
 				return nil
@@ -583,8 +420,8 @@ func TestRuntimeParity(t *testing.T) {
 					return err
 				}
 				for _, r := range results {
-					if strings.TrimSpace(r.stdout) != "stdout\nstderr" {
-						return fmt.Errorf("unexpected logs: %q", r.stdout)
+					if strings.TrimSpace(r.Output) != "stdout\nstderr" {
+						return fmt.Errorf("unexpected logs: %q", r.Output)
 					}
 					break
 				}
@@ -631,41 +468,15 @@ func TestRuntimeParity(t *testing.T) {
 		{
 			name: "restart",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
-				cname := fmt.Sprintf("restart-%s-%d", runtime, time.Now().UnixNano())
-				runCmd := []string{"docker", "run", "-d", "--name", cname}
-				if runtime != "" {
-					runCmd = append(runCmd, "--runtime", runtime)
-				}
-				runCmd = append(runCmd, "alpine", "sleep", "infinity")
-				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, runCmd...); err != nil {
-					return code, "", fmt.Errorf("start container: %w", err)
-				}
-				t.Cleanup(func() { cont.Exec(ctx, []string{"docker", "rm", "-f", cname}) })
-
-				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "restart", cname); err != nil {
+				cname := testutil.CreateNamedContainer(t, ctx, cont, runtime, "restart", "alpine", "sleep", "infinity")
+				
+				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "restart", cname); err != nil || code != 0 {
 					return code, "", fmt.Errorf("restart container: %w", err)
 				}
 
-				execCmd := []string{"docker", "exec", cname, "sh", "-c", "echo restarted"}
-				code, reader, err := cont.Exec(ctx, execCmd, tcexec.Multiplexed())
-				if err != nil {
-					return code, "", err
-				}
-				out, err := dindutil.ReadAll(ctx, reader)
-				return code, string(out), err
+				return testutil.DockerExec(ctx, cont, cname, "sh", "-c", "echo restarted")
 			},
-			verify: func(results map[string]result) error {
-				if err := defaultVerify(0)(results); err != nil {
-					return err
-				}
-				for _, r := range results {
-					if strings.TrimSpace(r.stdout) != "restarted" {
-						return fmt.Errorf("unexpected output: %q", r.stdout)
-					}
-					break
-				}
-				return nil
-			},
+			verify: testutil.ExpectExactOutput(0, "restarted"),
 		},
 		{
 			name: "healthcheck",
@@ -704,8 +515,8 @@ func TestRuntimeParity(t *testing.T) {
 					return err
 				}
 				for _, r := range results {
-					if strings.TrimSpace(r.stdout) != "healthy" {
-						return fmt.Errorf("unexpected health status: %q", r.stdout)
+					if strings.TrimSpace(r.Output) != "healthy" {
+						return fmt.Errorf("unexpected health status: %q", r.Output)
 					}
 					break
 				}
@@ -723,8 +534,8 @@ func TestRuntimeParity(t *testing.T) {
 					return err
 				}
 				for _, r := range results {
-					if strings.TrimSpace(r.stdout) != "0" {
-						return fmt.Errorf("unexpected output: %q", r.stdout)
+					if strings.TrimSpace(r.Output) != "0" {
+						return fmt.Errorf("unexpected output: %q", r.Output)
 					}
 					break
 				}
@@ -767,18 +578,7 @@ func TestRuntimeParity(t *testing.T) {
 					}
 				}
 			},
-			verify: func(results map[string]result) error {
-				if err := defaultVerify(0)(results); err != nil {
-					return err
-				}
-				for _, r := range results {
-					if strings.TrimSpace(r.stdout) != "hello" {
-						return fmt.Errorf("unexpected response: %q", r.stdout)
-					}
-					break
-				}
-				return nil
-			},
+			verify: testutil.ExpectExactOutput(0, "hello"),
 		},
 		{
 			name: "docker commit",
@@ -802,18 +602,7 @@ func TestRuntimeParity(t *testing.T) {
 				}
 				return dindutil.RunDocker(ctx, cont, runtime, imgName, "cat", "/committed")
 			},
-			verify: func(results map[string]result) error {
-				if err := defaultVerify(0)(results); err != nil {
-					return err
-				}
-				for _, r := range results {
-					if strings.TrimSpace(r.stdout) != "hello" {
-						return fmt.Errorf("unexpected output: %q", r.stdout)
-					}
-					break
-				}
-				return nil
-			},
+			verify: testutil.ExpectExactOutput(0, "hello"),
 		},
 		{
 			name: "wait exited",
@@ -878,18 +667,7 @@ func TestRuntimeParity(t *testing.T) {
 				}
 				return code, string(out), nil
 			},
-			verify: func(results map[string]result) error {
-				if err := defaultVerify(0)(results); err != nil {
-					return err
-				}
-				for _, r := range results {
-					if strings.TrimSpace(r.stdout) != "1\n2\n3" {
-						return fmt.Errorf("unexpected output: %q", r.stdout)
-					}
-					break
-				}
-				return nil
-			},
+			verify: testutil.ExpectExactOutput(0, "1\n2\n3"),
 		},
 	}
 
@@ -971,8 +749,8 @@ func TestRuntimeParity(t *testing.T) {
 				if t.Failed() {
 					logCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
-					dindutil.LogDelegatecLogs(t, logCtx, cont)
-					dindutil.LogRuncLogs(t, logCtx, cont)
+					// Combined, order-specific debug for current runtimes
+					testutil.CombineDebug(testutil.DebugDelegatec, testutil.DebugRunc)(t, logCtx, cont)
 					logCriuCheck(t, logCtx, cont)
 				}
 			})
@@ -991,7 +769,7 @@ func TestRuntimeParity(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s exec failed: %v", rt, err)
 				}
-				results[rt] = result{stdout: out, exit: code}
+				results[rt] = result{Output: out, ExitCode: code}
 			}
 			if err := c.verify(results); err != nil {
 				t.Fatal(err)
