@@ -3,14 +3,15 @@ module github.com/TheGrizzlyDev/vino
 go 1.25.0
 
 require (
-	github.com/containerd/containerd/api v1.9.0
-	github.com/containerd/containerd/v2 v2.1.4
-	github.com/containerd/errdefs v1.0.0
-	github.com/containerd/plugin v1.0.0
-	github.com/containerd/ttrpc v1.2.7
-	github.com/opencontainers/runtime-spec v1.2.1
-	github.com/testcontainers/testcontainers-go v0.32.0
-	google.golang.org/protobuf v1.36.6
+github.com/containerd/containerd/api v1.9.0
+github.com/containerd/containerd/v2 v2.1.4
+github.com/containerd/errdefs v1.0.0
+github.com/containerd/plugin v1.0.0
+github.com/containerd/ttrpc v1.2.7
+github.com/opencontainers/runtime-spec v1.2.1
+github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
+github.com/testcontainers/testcontainers-go v0.32.0
+google.golang.org/protobuf v1.36.6
 )
 
 require (

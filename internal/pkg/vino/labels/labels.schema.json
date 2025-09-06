@@ -1,0 +1,110 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Vinoc's Mounts and Devices labels",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dev": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "vinoc": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "devices": {
+                "type": "object",
+                "description": "Keyed by an arbitrary device id (e.g., serial1, gpu0)",
+                "additionalProperties": false,
+                "patternProperties": {
+                  "^[a-zA-Z0-9._-]+$": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "class": {
+                        "description": "Device class as enum or Windows Setup Class GUID",
+                        "oneOf": [
+                          { "type": "string", "enum": ["disk", "cdrom", "com", "pipe", "gpu"] },
+                          { "type": "string", "pattern": "^\\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\}$" }
+                        ]
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Linux path to device node or directory (e.g., /dev/ttyUSB0, /dev/sr0, /dev/dri/renderD128)"
+                      },
+                      "label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Windows-visible label (e.g., COM1, D:, \\\\.\\pipe\\foo, GPU0)"
+                      },
+                      "mode": { "type": "string", "enum": ["ro", "rw"] },
+                      "optional": { "type": "boolean", "default": false },
+                      "backend": {
+                        "type": "string",
+                        "enum": ["vulkan", "opengl"],
+                        "description": "GPU backend hint (only meaningful when class=gpu)"
+                      }
+                    },
+                    "required": ["class", "path", "label"],
+                    "allOf": [
+                      {
+                        "if": { "properties": { "class": { "const": "cdrom" } }, "required": ["class"] },
+                        "then": { "properties": { "mode": { "const": "ro" } } }
+                      }
+                    ]
+                  }
+                }
+              },
+              "mounts": {
+                "type": "object",
+                "description": "Keyed by an arbitrary mount id (e.g., data, media)",
+                "additionalProperties": false,
+                "patternProperties": {
+                  "^[a-zA-Z0-9._-]+$": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "source_path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Linux source path for mount"
+                      },
+                      "volume": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Named volume (runtime-resolved)"
+                      },
+                      "destination_label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Destination drive/device label (e.g., C:, D:, \\\\.\\pipe)"
+                      },
+                      "destination_path": {
+                        "type": "string",
+                        "description": "Path relative to destination_label (e.g., \\data, \\setup)"
+                      },
+                      "mode": { "type": "string", "enum": ["ro", "rw"] },
+                      "optional": { "type": "boolean", "default": false }
+                    },
+                    "required": ["destination_label"],
+                    "allOf": [
+                      {
+                        "anyOf": [
+                          { "required": ["source_path"] },
+                          { "required": ["volume"] }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "required": ["devices", "mounts"]
+          }
+        },
+        "required": ["vinoc"]
+      }
+    }
+  }
+  
