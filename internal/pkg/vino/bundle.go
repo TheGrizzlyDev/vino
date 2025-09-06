@@ -17,6 +17,7 @@ type BundleRewriter struct {
 	HookPath                string
 	CreateContainerHookArgs []string
 	StartContainerHookArgs  []string
+	RebindPaths             map[string]string
 }
 
 func (b *BundleRewriter) RewriteBundle(bundle *specs.Spec) error {
@@ -33,6 +34,15 @@ func (b *BundleRewriter) RewriteBundle(bundle *specs.Spec) error {
 		Source:      b.HookPath,
 		Options:     []string{"rbind", "ro", "nosuid", "nodev"},
 	})
+
+	for rebindPathSrc, rebindPathDest := range b.RebindPaths {
+		bundle.Mounts = append(bundle.Mounts, specs.Mount{
+			Destination: rebindPathDest,
+			Type:        "bind",
+			Source:      rebindPathSrc,
+			Options:     []string{"rbind", "ro", "nosuid", "nodev"},
+		})
+	}
 
 	bundle.Hooks.CreateContainer = append(bundle.Hooks.CreateContainer, b.hookFor(false, b.CreateContainerHookArgs))
 

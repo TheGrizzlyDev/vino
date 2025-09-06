@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"strings"
 
 	"github.com/TheGrizzlyDev/vino/internal/pkg/cli"
 	"github.com/TheGrizzlyDev/vino/internal/pkg/runc"
@@ -14,7 +15,10 @@ import (
 )
 
 const (
-	HOOK_SUBCOMMAND = "oci-runtime-hook"
+	HOOK_SUBCOMMAND          = "oci-runtime-hook"
+	RUNC_SUBCOMMAND          = "runc"
+	WINE_LAUNCHER_SUBCOMMAND = "wine-launcher"
+	WINE_LAUNCHER_PATH       = "/run/wine-launcher"
 )
 
 type VinoOptions struct {
@@ -63,12 +67,14 @@ func main() {
 		panic("you need to specify a subcommand")
 	}
 	switch os.Args[1] {
-	case "runc":
+	case RUNC_SUBCOMMAND:
 		if err := RuncMain(os.Args[2:]); err != nil {
 			panic(err)
 		}
 	case HOOK_SUBCOMMAND:
 		log.Println("empty hook: not implemented")
+	case WINE_LAUNCHER_SUBCOMMAND:
+		RunWine(os.Args[2:])
 	default:
 		panic("this subcommand isn't currently supported")
 	}
@@ -115,8 +121,14 @@ func RuncMain(args []string) error {
 		HookPath:                executablePath,
 		CreateContainerHookArgs: []string{HOOK_SUBCOMMAND, "create"},
 		StartContainerHookArgs:  []string{HOOK_SUBCOMMAND, "start"},
+		RebindPaths: map[string]string{
+			executablePath: WINE_LAUNCHER_PATH,
+		},
 	}
-	processRewriter := &vino.ProcessRewriter{}
+	processRewriter := &vino.ProcessRewriter{
+		WineLauncherPath: WINE_LAUNCHER_PATH,
+		WineLauncherArgs: []string{WINE_LAUNCHER_SUBCOMMAND},
+	}
 
 	w := runc.Wrapper{
 		BundleRewriter:  bundleRewriter,
@@ -132,4 +144,33 @@ func RuncMain(args []string) error {
 	}
 
 	return nil
+}
+
+func RunWine(args []string) (int, error) {
+	bin := "wine64"
+	switch strings.ToLower(os.Getenv("WINEARCH")) {
+	case "win32":
+		bin = "wine"
+	case "win64":
+		bin = "wine64"
+	}
+
+	cmd := exec.Command(bin, args...)
+	cmd.Env = os.Environ()
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	err := cmd.Run()
+	if err == nil {
+		return 0, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		if status, ok := ee.ProcessState.Sys().(interface{ ExitStatus() int }); ok {
+			return status.ExitStatus(), ee
+		}
+		return 1, ee
+	}
+	return 127, err
 }

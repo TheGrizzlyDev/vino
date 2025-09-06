@@ -77,7 +77,7 @@ func main() {
 	)
 
 	baseDockerfile := filepath.Join(root, "images/base/ubuntu-24_04.Dockerfile")
-	dindDockerfile := filepath.Join(root, "tests/integration/dind/Dockerfile")
+	dindDockerfile := filepath.Join(root, "internal/tests/integration/dind/Dockerfile")
 
 	if !*noBuild {
 		log.Printf("Building %s...", baseImage)

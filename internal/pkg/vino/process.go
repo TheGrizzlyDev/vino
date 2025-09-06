@@ -11,7 +11,10 @@ var (
 	_ runc.ProcessRewriter = &ProcessRewriter{}
 )
 
-type ProcessRewriter struct{}
+type ProcessRewriter struct {
+	WineLauncherPath string
+	WineLauncherArgs []string
+}
 
 func (p *ProcessRewriter) RewriteProcess(proc *specs.Process) error {
 	if proc == nil {
@@ -21,6 +24,7 @@ func (p *ProcessRewriter) RewriteProcess(proc *specs.Process) error {
 		return fmt.Errorf("vinoc: empty process args")
 	}
 
-	proc.Args = append([]string{"wine64"}, proc.Args...)
+	args := append([]string{p.WineLauncherPath}, p.WineLauncherArgs...)
+	proc.Args = append(args, proc.Args...)
 	return nil
 }

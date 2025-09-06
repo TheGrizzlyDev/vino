@@ -1,4 +1,4 @@
 .gocache
 .gopath
-vino
-delegatec
+./vino
+./delegatec
