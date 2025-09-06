@@ -10,7 +10,7 @@ import (
 
 	tc "github.com/testcontainers/testcontainers-go"
 
-	dindutil "github.com/TheGrizzlyDev/vino/tests/dindutil"
+	dindutil "github.com/TheGrizzlyDev/vino/internal/tests/dindutil"
 )
 
 type TestCase struct {
@@ -49,14 +49,14 @@ func (tr *TestRunner) WithCustomDebug(debugFunc DebugFunc) *TestRunner {
 
 func (tr *TestRunner) RunTestCase(t *testing.T, testCase TestCase) {
 	t.Helper()
-	
+
 	cont := tr.Pool.Acquire(t)
-	
+
 	timeout := testCase.Timeout
 	if timeout == 0 {
 		timeout = tr.DefaultTimeout
 	}
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -95,28 +95,28 @@ func (tr *TestRunner) RunTestCases(t *testing.T, testCases []TestCase) {
 
 func (tr *TestRunner) logDebugInfo(t *testing.T, ctx context.Context, cont tc.Container) {
 	t.Helper()
-	
+
 	logCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	
+
 	if tr.CustomDebugFunc != nil {
 		tr.CustomDebugFunc(t, logCtx, cont)
 		return
 	}
-	
+
 	tr.logBasicDebugInfo(t, logCtx, cont)
 }
 
 func (tr *TestRunner) logBasicDebugInfo(t *testing.T, ctx context.Context, cont tc.Container) {
 	t.Helper()
-	
+
 	name, _ := cont.Name(ctx)
 	t.Logf("=== DEBUG INFO for container %s ===", name)
-	
+
 	if code, out, _, err := dindutil.ExecNoOutput(ctx, cont, "cat", "/etc/docker/daemon.json"); err == nil && code == 0 {
 		t.Logf("Docker daemon config: %s", out)
 	}
-	
+
 	if code, out, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "info", "--format", "{{.Runtimes}}"); err == nil && code == 0 {
 		t.Logf("Available runtimes: %s", out)
 	}
@@ -134,18 +134,18 @@ func DebugDelegatec(t *testing.T, ctx context.Context, cont tc.Container) {
 
 func DebugVino(t *testing.T, ctx context.Context, cont tc.Container) {
 	t.Helper()
-	
+
 	name, _ := cont.Name(ctx)
 	t.Logf("=== VINO DEBUG INFO for %s ===", name)
-	
+
 	if code, out, _, err := dindutil.ExecNoOutput(ctx, cont, "ls", "-la", "/usr/local/sbin/vino"); err == nil && code == 0 {
 		t.Logf("Vino binary info: %s", out)
 	}
-	
+
 	if code, out, _, err := dindutil.ExecNoOutput(ctx, cont, "which", "wine64"); err == nil && code == 0 {
 		t.Logf("Wine64 location: %s", out)
 	}
-	
+
 	cont.Exec(ctx, []string{"sh", "-c", "find /var/log -name '*vino*' 2>/dev/null | head -5 | while read f; do echo \"=== $f ===\"; head -20 \"$f\"; done"})
 }
 
@@ -210,13 +210,13 @@ func ExpectExactOutput(wantCode int, expectedOutput string) func(map[string]Resu
 func ContainerWithUpdate(namePrefix string, updateCmd []string, execCmd []string) func(*testing.T, context.Context, tc.Container, string) (int, string, error) {
 	return func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 		cname := CreateNamedContainer(t, ctx, cont, runtime, namePrefix, "alpine", "tail", "-f", "/dev/null")
-		
+
 		// Run the update command
 		updateArgs := append(updateCmd, cname)
 		if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, updateArgs...); err != nil || code != 0 {
 			return code, "", fmt.Errorf("update failed: %w", err)
 		}
-		
+
 		// Execute the final command
 		return DockerExec(ctx, cont, cname, execCmd...)
 	}
@@ -267,11 +267,11 @@ func BuildImageFromDockerfile(imageName, dockerfilePath string) SetupFunc {
 
 		dockerfileFullPath := filepath.Join(rootDir, dockerfilePath)
 		buildCmd := fmt.Sprintf("docker build -t %s -f %s %s", imageName, dockerfileFullPath, rootDir)
-		
+
 		t.Logf("Building image %s from %s", imageName, dockerfilePath)
 		code, stdout, stderr, err := dindutil.ExecNoOutput(ctx, cont, "sh", "-c", buildCmd)
 		if err != nil || code != 0 {
-			return fmt.Errorf("failed to build %s: code=%d, err=%v\nstdout: %s\nstderr: %s", 
+			return fmt.Errorf("failed to build %s: code=%d, err=%v\nstdout: %s\nstderr: %s",
 				imageName, code, err, stdout, stderr)
 		}
 		t.Logf("Successfully built image %s", imageName)
@@ -302,4 +302,3 @@ func RunDockerContainer(runtime, imageName string, cmd ...string) ExecuteFunc {
 		return dindutil.RunDocker(ctx, cont, runtime, args...)
 	}
 }
-

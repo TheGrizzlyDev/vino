@@ -2,8 +2,8 @@
 // +build e2e
 
 package dind
-import (
 
+import (
 	"bytes"
 	"context"
 	"flag"
@@ -20,8 +20,8 @@ import (
 	tc "github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 
-	dindutil "github.com/TheGrizzlyDev/vino/tests/dindutil"
-	"github.com/TheGrizzlyDev/vino/tests/testutil"
+	dindutil "github.com/TheGrizzlyDev/vino/internal/tests/dindutil"
+	"github.com/TheGrizzlyDev/vino/internal/tests/testutil"
 )
 
 var dindParallel = flag.Int("dind.parallel", 4, "number of dind containers to run in parallel")
@@ -244,7 +244,7 @@ func TestRuntimeParity(t *testing.T) {
 		},
 		{
 			name: "user and capabilities",
-			fn: testutil.SimpleDockerRun("--user", "1000:1000", "alpine", "sh", "-c", "id -u; id -g; cat /proc/self/status | grep CapEff; ping -c 1 127.0.0.1"),
+			fn:   testutil.SimpleDockerRun("--user", "1000:1000", "alpine", "sh", "-c", "id -u; id -g; cat /proc/self/status | grep CapEff; ping -c 1 127.0.0.1"),
 			verify: func(results map[string]result) error {
 				verifyOut := func(runtime, out string) error {
 					if !strings.Contains(out, "1000\n1000") {
@@ -318,7 +318,7 @@ func TestRuntimeParity(t *testing.T) {
 			name: "pause/unpause",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := testutil.CreateNamedContainer(t, ctx, cont, runtime, "pause", "alpine", "sleep", "infinity")
-				
+
 				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "pause", cname); err != nil || code != 0 {
 					return code, "", fmt.Errorf("pause container: %w", err)
 				}
@@ -469,7 +469,7 @@ func TestRuntimeParity(t *testing.T) {
 			name: "restart",
 			fn: func(t *testing.T, ctx context.Context, cont tc.Container, runtime string) (int, string, error) {
 				cname := testutil.CreateNamedContainer(t, ctx, cont, runtime, "restart", "alpine", "sleep", "infinity")
-				
+
 				if code, _, _, err := dindutil.ExecNoOutput(ctx, cont, "docker", "restart", cname); err != nil || code != 0 {
 					return code, "", fmt.Errorf("restart container: %w", err)
 				}

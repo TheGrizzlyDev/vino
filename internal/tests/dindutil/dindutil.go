@@ -85,14 +85,14 @@ func logStreamLines(t *testing.T, container, runtime, stream string, data []byte
 // BuildDindImage builds the DinD test image and schedules its removal.
 func BuildDindImage(t *testing.T) string {
 	t.Helper()
-	rootDir, err := filepath.Abs("../../..")
+	rootDir, err := filepath.Abs("../../../..")
 	if err != nil {
 		t.Fatalf("failed to get root dir: %v", err)
 	}
 	image := "vino-dind-test"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", "build", "-t", image, "-f", filepath.Join(rootDir, "tests/integration/dind/Dockerfile"), rootDir)
+	cmd := exec.CommandContext(ctx, "docker", "build", "-t", image, "-f", filepath.Join(rootDir, "internal/tests/integration/dind/Dockerfile"), rootDir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("failed to build image: %v\n%s", err, string(out))
