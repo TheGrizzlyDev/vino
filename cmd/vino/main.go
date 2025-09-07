@@ -1,9 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"reflect"
@@ -12,6 +12,9 @@ import (
 	"github.com/TheGrizzlyDev/vino/internal/pkg/cli"
 	"github.com/TheGrizzlyDev/vino/internal/pkg/runc"
 	"github.com/TheGrizzlyDev/vino/internal/pkg/vino"
+	"github.com/TheGrizzlyDev/vino/internal/pkg/vino/hook"
+	"github.com/TheGrizzlyDev/vino/internal/pkg/vino/labels"
+	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 const (
@@ -72,7 +75,9 @@ func main() {
 			panic(err)
 		}
 	case HOOK_SUBCOMMAND:
-		log.Println("empty hook: not implemented")
+		if err := HookMain(os.Args[2:]); err != nil {
+			panic(err)
+		}
 	case WINE_LAUNCHER_SUBCOMMAND:
 		RunWine(os.Args[2:])
 	default:
@@ -143,6 +148,40 @@ func RuncMain(args []string) error {
 		return fmt.Errorf("command run failed: %w", err)
 	}
 
+	return nil
+}
+
+func HookMain(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("no hook subcommand")
+	}
+
+	var state specs.State
+	if err := json.NewDecoder(os.Stdin).Decode(&state); err != nil {
+		return fmt.Errorf("decode state: %w", err)
+	}
+
+	devs, mounts, err := labels.Parse(state.Annotations)
+	if err != nil {
+		return fmt.Errorf("parse annotations: %w", err)
+	}
+
+	hookEnv, err := hook.FromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	switch args[0] {
+	case "start":
+		if err = hookEnv.ApplyDevices(devs); err != nil {
+			return err
+		}
+		if err = hookEnv.ApplyMounts(mounts); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported hook subcommand: %s", args[0])
+	}
 	return nil
 }
 
