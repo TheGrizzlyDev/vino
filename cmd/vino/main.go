@@ -179,8 +179,6 @@ func HookMain(args []string) error {
 		if err = hookEnv.ApplyMounts(mounts); err != nil {
 			return err
 		}
-	default:
-		return fmt.Errorf("unsupported hook subcommand: %s", args[0])
 	}
 	return nil
 }

@@ -50,68 +50,36 @@ func (b *BundleRewriter) RewriteBundle(bundle *specs.Spec) error {
 		}
 
 		devType := "c"
-		if st.Mode&unix.S_IFMT == unix.S_IFBLK {
+		if (st.Mode & unix.S_IFMT) == unix.S_IFBLK {
 			devType = "b"
 		}
 		major := int64(unix.Major(uint64(st.Rdev)))
 		minor := int64(unix.Minor(uint64(st.Rdev)))
 
-		exists := false
-		for _, existing := range bundle.Linux.Devices {
-			if existing.Path == d.Path {
-				exists = true
-				break
-			}
-		}
-		if !exists {
-			bundle.Linux.Devices = append(bundle.Linux.Devices, specs.LinuxDevice{
-				Path:  d.Path,
-				Type:  devType,
-				Major: major,
-				Minor: minor,
-			})
-		}
+		bundle.Linux.Devices = append(bundle.Linux.Devices, specs.LinuxDevice{
+			Path:  d.Path,
+			Type:  devType,
+			Major: major,
+			Minor: minor,
+		})
 
-		cgExists := false
-		for _, cg := range bundle.Linux.Resources.Devices {
-			if cg.Type == devType && cg.Major != nil && cg.Minor != nil && *cg.Major == major && *cg.Minor == minor {
-				cgExists = true
-				break
-			}
+		access := "r"
+		if d.Mode != "r" {
+			access = d.Mode
 		}
-		if !cgExists {
-			access := "r"
-			if d.Mode == "rw" {
-				access = "rw"
-			}
-			bundle.Linux.Resources.Devices = append(bundle.Linux.Resources.Devices, specs.LinuxDeviceCgroup{
-				Allow:  true,
-				Type:   devType,
-				Major:  &major,
-				Minor:  &minor,
-				Access: access,
-			})
-		}
-
-		mAccess := "ro"
-		if d.Mode == "rw" {
-			mAccess = "rw"
-		}
-		mountExists := false
-		for _, m := range bundle.Mounts {
-			if m.Destination == d.Path && m.Source == d.Path {
-				mountExists = true
-				break
-			}
-		}
-		if !mountExists {
-			bundle.Mounts = append(bundle.Mounts, specs.Mount{
-				Destination: d.Path,
-				Type:        "bind",
-				Source:      d.Path,
-				Options:     []string{"rbind", mAccess},
-			})
-		}
+		bundle.Linux.Resources.Devices = append(bundle.Linux.Resources.Devices, specs.LinuxDeviceCgroup{
+			Allow:  true,
+			Type:   devType,
+			Major:  &major,
+			Minor:  &minor,
+			Access: access,
+		})
+		bundle.Mounts = append(bundle.Mounts, specs.Mount{
+			Destination: d.Path,
+			Type:        "bind",
+			Source:      d.Path,
+			Options:     []string{"rbind", access},
+		})
 	}
 
 	for _, m := range mounts {
@@ -132,24 +100,15 @@ func (b *BundleRewriter) RewriteBundle(bundle *specs.Spec) error {
 			return fmt.Errorf("stat %s: %w", src, err)
 		}
 		access := "ro"
-		if m.Mode == "rw" {
-			access = "rw"
+		if m.Mode != "ro" {
+			access = m.Mode
 		}
-		exists := false
-		for _, existing := range bundle.Mounts {
-			if existing.Destination == src && existing.Source == src {
-				exists = true
-				break
-			}
-		}
-		if !exists {
-			bundle.Mounts = append(bundle.Mounts, specs.Mount{
-				Destination: src,
-				Type:        "bind",
-				Source:      src,
-				Options:     []string{"rbind", access},
-			})
-		}
+		bundle.Mounts = append(bundle.Mounts, specs.Mount{
+			Destination: src,
+			Type:        "bind",
+			Source:      src,
+			Options:     []string{"rbind", access},
+		})
 	}
 	if bundle.Hooks == nil {
 		bundle.Hooks = &specs.Hooks{}
