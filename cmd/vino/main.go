@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"reflect"
@@ -155,6 +156,12 @@ func HookMain(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("no hook subcommand")
 	}
+	f, err := os.OpenFile("/var/log/vino-hook.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		return fmt.Errorf("error opening log file: %v", err)
+	}
+	defer f.Close()
+	log.SetOutput(f)
 
 	var state specs.State
 	if err := json.NewDecoder(os.Stdin).Decode(&state); err != nil {
@@ -184,12 +191,21 @@ func HookMain(args []string) error {
 }
 
 func RunWine(args []string) (int, error) {
-	bin := "wine64"
+	wine := "wine64"
 	switch strings.ToLower(os.Getenv("WINEARCH")) {
 	case "win32":
-		bin = "wine"
+		wine = "wine"
 	case "win64":
-		bin = "wine64"
+		wine = "wine64"
+	}
+
+	_, display := os.LookupEnv("DISPLAY")
+	_, xdg := os.LookupEnv("XDG_RUNTIME_DIR")
+
+	bin := wine
+	if !(display || xdg) {
+		bin = "xvfb-run"
+		args = append([]string{"-a", wine}, args...)
 	}
 
 	cmd := exec.Command(bin, args...)

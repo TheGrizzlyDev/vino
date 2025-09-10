@@ -10,7 +10,7 @@ RUN apt-get update -y && \
     wget -O - https://dl.winehq.org/wine-builds/winehq.key | gpg --dearmor -o /etc/apt/keyrings/winehq-archive.key - && \
     wget -NP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources && \
     apt-get update -y && \
-    apt-get install -y --install-recommends winehq-stable winetricks && \
+    apt-get install -y --install-recommends winehq-stable winetricks xvfb && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get clean
 
