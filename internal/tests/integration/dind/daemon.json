@@ -2,7 +2,7 @@
     "runtimes": {
       "delegatec": {
         "path": "/usr/local/sbin/delegatec",
-        "runtimeArgs": ["--delegate_path", "/usr/local/bin/runc"]
+        "runtimeArgs": ["--delegate_path", "/usr/local/bin/runc", "--delegatec_logs", "/var/log/delegatec.log"]
       },
       "vino": {
         "path": "/usr/local/sbin/vino",

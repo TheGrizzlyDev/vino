@@ -107,8 +107,9 @@ func (lw *logWriter) Close() error {
 }
 
 type DelegatecCmd struct {
-	Arguments    []string `cli_argument:"args"`
-	DelegatePath string   `cli_flag:"--delegate_path" cli_group:"delegate"`
+	Arguments     []string `cli_argument:"args"`
+	DelegatecLogs string   `cli_flag:"--delegatec_logs" cli_group:"delegate"`
+	DelegatePath  string   `cli_flag:"--delegate_path" cli_group:"delegate"`
 }
 
 func (d DelegatecCmd) Slots() cli.Slot {
@@ -121,7 +122,12 @@ func (d DelegatecCmd) Slots() cli.Slot {
 }
 
 func main() {
-	f, err := os.OpenFile("/var/log/delegatec.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	var delegatecCmd DelegatecCmd
+	if err := cli.Parse(&delegatecCmd, os.Args[1:]); err != nil {
+		panic(err)
+	}
+
+	f, err := os.OpenFile(delegatecCmd.DelegatecLogs, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalf("error opening file: %v", err)
 	}
@@ -131,10 +137,8 @@ func main() {
 	log.Printf("delegatec called with args: %v\n", os.Args)
 	log.Printf("delegatec environment: %v\n", os.Environ())
 
-	var delegatecCmd DelegatecCmd
-	if err := cli.Parse(&delegatecCmd, os.Args[1:]); err != nil {
-		panic(err)
-	}
+	log.Println(os.Args)
+	log.Println(delegatecCmd)
 
 	cli, err := runc.NewDelegatingCliClient(delegatecCmd.DelegatePath, runc.InheritStdin)
 	if err != nil {
