@@ -166,3 +166,10 @@ func TestValidateCommandTags_OK(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestValidateCommandTags_NoSubcommand(t *testing.T) {
+	t.Parallel()
+	if err := ValidateCommandTags(noSubCmd{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

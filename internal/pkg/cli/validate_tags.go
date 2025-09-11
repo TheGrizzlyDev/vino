@@ -14,11 +14,8 @@ func ValidateCommandTags(cmd Command) error {
 	}
 	typ := reflect.TypeOf(cmd)
 
-	// Validate Slots(): must contain exactly one Subcommand and collect
-	// allowed flag-group names and argument names.
-	if strings.TrimSpace(SubcommandOf(cmd)) == "" {
-		return fmt.Errorf("ValidateCommandTags: %s has no Subcommand in Slots()", typ)
-	}
+	// Validate Slots(): collect allowed flag-group names and argument names.
+	// Subcommands are optional.
 	allowedGroups := map[string]struct{}{}
 	allowedArgs := map[string]struct{}{}
 	// (no special casing of any literal values)
