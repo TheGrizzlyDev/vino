@@ -51,6 +51,14 @@ type RuncCommands struct {
 	Features   *Features
 }
 
+func RunWithArgs(w *Wrapper, args []string) error {
+	var cmds RuncCommands
+	if err := cli.ParseAny(&cmds, args); err != nil {
+		return err
+	}
+	return w.Run(cmds)
+}
+
 func (w *Wrapper) Run(cmds RuncCommands) error {
 	if w.Delegate == nil {
 		return fmt.Errorf("wrapper: nil delegate")

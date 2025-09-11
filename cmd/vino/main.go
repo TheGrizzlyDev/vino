@@ -213,7 +213,7 @@ func RuncMain(cmd RuncCommand) error {
 		ProcessRewriter: processRewriter,
 		Delegate:        delegate,
 	}
-	if err := w.Run(cmd); err != nil {
+	if err := runc.RunWithArgs(&w, cmd.RuncArgs); err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
 			return err

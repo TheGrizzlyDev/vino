@@ -1,6 +1,7 @@
 package vino
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,7 +31,7 @@ func TestBundleRewriterAddsDevicesAndMounts(t *testing.T) {
 	}
 
 	spec := &specs.Spec{Annotations: annotations}
-	br := &BundleRewriter{HookPath: hook}
+	br := &BundleRewriter{HookPathBeforePivot: hook}
 	if err := br.RewriteBundle(spec); err != nil {
 		t.Fatalf("rewrite bundle: %v", err)
 	}
@@ -84,6 +85,7 @@ func TestBundleRewriterAddsDevicesAndMounts(t *testing.T) {
 	}
 
 	countDev := 0
+	fmt.Println(spec.Linux.Devices)
 	for _, d := range spec.Linux.Devices {
 		if d.Path == "/dev/null" {
 			countDev++

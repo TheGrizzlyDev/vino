@@ -3,11 +3,9 @@ package main
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"log"
 	"os"
 	"os/exec"
-	"reflect"
 	"sync"
 	"time"
 
@@ -108,40 +106,18 @@ func (lw *logWriter) Close() error {
 	return nil
 }
 
-type DelegatecCmd[T cli.Command] struct {
-	Command      T      `cli_embed:""`
-	DelegatePath string `cli_flag:"--delegate_path" cli_group:"delegate"`
+type DelegatecCmd struct {
+	Arguments    []string `cli_argument:"args"`
+	DelegatePath string   `cli_flag:"--delegate_path" cli_group:"delegate"`
 }
 
-func (d DelegatecCmd[T]) Slots() cli.Slot {
+func (d DelegatecCmd) Slots() cli.Slot {
 	return cli.Group{
-		Unordered: []cli.Slot{
-			cli.FlagGroup{Name: "delegate"},
-		},
 		Ordered: []cli.Slot{
-			d.Command.Slots(),
+			cli.FlagGroup{Name: "delegate"},
+			cli.Arguments{Name: "args"},
 		},
 	}
-}
-
-type Commands struct {
-	Checkpoint *DelegatecCmd[runc.Checkpoint]
-	Restore    *DelegatecCmd[runc.Restore]
-	Create     *DelegatecCmd[runc.Create]
-	Run        *DelegatecCmd[runc.Run]
-	Start      *DelegatecCmd[runc.Start]
-	Delete     *DelegatecCmd[runc.Delete]
-	Pause      *DelegatecCmd[runc.Pause]
-	Resume     *DelegatecCmd[runc.Resume]
-	Kill       *DelegatecCmd[runc.Kill]
-	List       *DelegatecCmd[runc.List]
-	Ps         *DelegatecCmd[runc.Ps]
-	State      *DelegatecCmd[runc.State]
-	Events     *DelegatecCmd[runc.Events]
-	Exec       *DelegatecCmd[runc.Exec]
-	Spec       *DelegatecCmd[runc.Spec]
-	Update     *DelegatecCmd[runc.Update]
-	Features   *DelegatecCmd[runc.Features]
 }
 
 func main() {
@@ -155,53 +131,22 @@ func main() {
 	log.Printf("delegatec called with args: %v\n", os.Args)
 	log.Printf("delegatec environment: %v\n", os.Environ())
 
-	cmds := Commands{}
-	if err := cli.ParseAny(&cmds, os.Args[1:]); err != nil {
-		log.Printf("failed to parse args: %v\nenv: %v", err, os.Environ())
-		fmt.Fprintf(os.Stderr, "failed to parse args: %v\nenv: %v", err, os.Environ())
-		os.Exit(1)
+	var delegatecCmd DelegatecCmd
+	if err := cli.Parse(&delegatecCmd, os.Args[1:]); err != nil {
+		panic(err)
 	}
 
-	var (
-		cmd          cli.Command
-		delegatePath string
-	)
-
-	v := reflect.ValueOf(cmds)
-	for i := 0; i < v.NumField(); i++ {
-		f := v.Field(i)
-		if f.IsNil() {
-			continue
-		}
-		delegatePath = f.Elem().FieldByName("DelegatePath").String()
-		cmdIface := f.Elem().FieldByName("Command").Interface()
-		cmd = cmdIface.(cli.Command)
-		break
-	}
-
-	log.Printf("delegatec parsed command: %#v\n", cmd)
-	log.Printf("delegatec delegate path: %s\n", delegatePath)
-
-	if cmd == nil {
-		fmt.Fprintln(os.Stderr, "no command specified")
-		os.Exit(1)
-	}
-
-	cli, err := runc.NewDelegatingCliClient(delegatePath, runc.InheritStdin)
+	cli, err := runc.NewDelegatingCliClient(delegatecCmd.DelegatePath, runc.InheritStdin)
 	if err != nil {
-		log.Printf("failed to create delegating client: %v\nenv: %v", err, os.Environ())
-		fmt.Fprintf(os.Stderr, "failed to create delegating client: %v\nenv: %v", err, os.Environ())
-		os.Exit(1)
+		panic(err)
 	}
 
 	w := runc.Wrapper{Delegate: cli}
-	if err := w.Run(cmd); err != nil {
+	if err := runc.RunWithArgs(&w, delegatecCmd.Arguments); err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
 			os.Exit(ee.ExitCode())
 		}
-		log.Printf("command run failed: %v\nenv: %v", err, os.Environ())
-		fmt.Fprintf(os.Stderr, "command run failed: %v\nenv: %v", err, os.Environ())
-		os.Exit(1)
+		panic(err)
 	}
 }
