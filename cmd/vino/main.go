@@ -22,7 +22,7 @@ const (
 )
 
 type CommonCommand struct {
-	VinocLogPath string   `cli_flag:"--vinoc_log_path" cli_group:"common"`
+	VinocLogPath *string  `cli_flag:"--vinoc_log_path" cli_group:"common"`
 	VinoArgs     []string `cli_argument:"args"`
 }
 
@@ -132,12 +132,14 @@ func run(args []string) error {
 	if err := cli.Parse(&common, os.Args[1:]); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(common.VinocLogPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		return err
+	if common.VinocLogPath != nil {
+		f, err := os.OpenFile(*common.VinocLogPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		log.SetOutput(f)
 	}
-	defer f.Close()
-	log.SetOutput(f)
 
 	var vinocCommands VinocCommands
 	if err := cli.ParseAny(&vinocCommands, common.VinoArgs); err != nil {
