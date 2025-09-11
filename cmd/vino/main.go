@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"reflect"
 	"strings"
 
 	"github.com/TheGrizzlyDev/vino/internal/pkg/cli"
@@ -19,100 +18,146 @@ import (
 )
 
 const (
-	HOOK_SUBCOMMAND          = "oci-runtime-hook"
-	RUNC_SUBCOMMAND          = "runc"
-	WINE_LAUNCHER_SUBCOMMAND = "wine-launcher"
-	WINE_LAUNCHER_PATH       = "/run/wine-launcher"
+	VINO_AFTER_PIVOT_PATH = "/run/vino"
 )
 
-type VinoOptions struct {
-	DelegatePath string `cli_flag:"--delegate_path" cli_group:"delegate"`
+type CommonCommand struct {
+	VinocLogPath string   `cli_flag:"--vinoc_log_path" cli_group:"common"`
+	VinoArgs     []string `cli_argument:"args"`
 }
 
-type VinoRuncCommand[T cli.Command] struct {
-	Command T           `cli_embed:""`
-	Options VinoOptions `cli_embed:""`
-}
-
-func (d VinoRuncCommand[T]) Slots() cli.Slot {
+func (CommonCommand) Slots() cli.Slot {
 	return cli.Group{
 		Unordered: []cli.Slot{
-			cli.FlagGroup{Name: "delegate"},
-		},
-		Ordered: []cli.Slot{
-			d.Command.Slots(),
+			cli.FlagGroup{Name: "common"},
+			cli.Arguments{Name: "args"},
 		},
 	}
 }
 
-type RuncCommands struct {
-	Checkpoint *VinoRuncCommand[runc.Checkpoint]
-	Restore    *VinoRuncCommand[runc.Restore]
-	Create     *VinoRuncCommand[runc.Create]
-	Run        *VinoRuncCommand[runc.Run]
-	Start      *VinoRuncCommand[runc.Start]
-	Delete     *VinoRuncCommand[runc.Delete]
-	Pause      *VinoRuncCommand[runc.Pause]
-	Resume     *VinoRuncCommand[runc.Resume]
-	Kill       *VinoRuncCommand[runc.Kill]
-	List       *VinoRuncCommand[runc.List]
-	Ps         *VinoRuncCommand[runc.Ps]
-	State      *VinoRuncCommand[runc.State]
-	Events     *VinoRuncCommand[runc.Events]
-	Exec       *VinoRuncCommand[runc.Exec]
-	Spec       *VinoRuncCommand[runc.Spec]
-	Update     *VinoRuncCommand[runc.Update]
-	Features   *VinoRuncCommand[runc.Features]
+type RuncCommand struct {
+	DelegatePath string   `cli_flag:"--delegate_path" cli_group:"vinoc"`
+	RuncArgs     []string `cli_argument:"args"`
+}
+
+func (RuncCommand) Slots() cli.Slot {
+	return cli.Group{
+		Ordered: []cli.Slot{
+			cli.Subcommand{Value: "runc"},
+			cli.FlagGroup{Name: "vinoc"},
+			cli.Arguments{Name: "args"},
+		},
+	}
+}
+
+type HookCommand struct {
+	HookArgs []string `cli_argument:"args"`
+}
+
+func (HookCommand) Slots() cli.Slot {
+	return cli.Group{
+		Unordered: []cli.Slot{},
+		Ordered: []cli.Slot{
+			cli.Subcommand{Value: "oci-runtime-hook"},
+			cli.Arguments{Name: "args"},
+		},
+	}
+}
+
+type HookCreateCommand struct{}
+
+func (HookCreateCommand) Slots() cli.Slot {
+	return cli.Group{
+		Ordered: []cli.Slot{
+			cli.Subcommand{Value: "create"},
+		},
+	}
+}
+
+type HookStartCommand struct{}
+
+func (HookStartCommand) Slots() cli.Slot {
+	return cli.Group{
+		Ordered: []cli.Slot{
+			cli.Subcommand{Value: "start"},
+		},
+	}
+}
+
+type HookCommands struct {
+	create *HookCreateCommand
+	start  *HookStartCommand
+}
+
+type WineLauncherCommand struct {
+	Args []string `cli_argument:"args"`
+}
+
+func (WineLauncherCommand) Slots() cli.Slot {
+	return cli.Group{
+		Unordered: []cli.Slot{},
+		Ordered: []cli.Slot{
+			cli.Subcommand{Value: "wine-launcher"},
+			cli.Arguments{Name: "args"},
+		},
+	}
+}
+
+type VinocCommands struct {
+	runc     *RuncCommand
+	hook     *HookCommand
+	launcher *WineLauncherCommand
 }
 
 func main() {
-	fmt.Println(os.Args, os.Args[2:])
-	if len(os.Args) < 2 {
-		panic("you need to specify a subcommand")
+	err := run(os.Args[1:])
+	if err == nil {
+		os.Exit(0)
 	}
-	switch os.Args[1] {
-	case RUNC_SUBCOMMAND:
-		if err := RuncMain(os.Args[2:]); err != nil {
-			panic(err)
+
+	log.Println(err)
+
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		if status, ok := ee.ProcessState.Sys().(interface{ ExitStatus() int }); ok {
+			os.Exit(status.ExitStatus())
 		}
-	case HOOK_SUBCOMMAND:
-		if err := HookMain(os.Args[2:]); err != nil {
-			panic(err)
-		}
-	case WINE_LAUNCHER_SUBCOMMAND:
-		RunWine(os.Args[2:])
-	default:
-		panic("this subcommand isn't currently supported")
 	}
+	os.Exit(1)
 }
 
-func RuncMain(args []string) error {
-	cmds := RuncCommands{}
-	if err := cli.ParseAny(&cmds, os.Args[2:]); err != nil {
-		return fmt.Errorf("failed to parse args: %w", err)
+func run(args []string) error {
+
+	var common CommonCommand
+	if err := cli.Parse(&common, os.Args[1:]); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(common.VinocLogPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	log.SetOutput(f)
+
+	var vinocCommands VinocCommands
+	if err := cli.ParseAny(&vinocCommands, common.VinoArgs); err != nil {
+		return err
 	}
 
-	var (
-		cmd  cli.Command
-		opts VinoOptions
-	)
-
-	v := reflect.ValueOf(cmds)
-	for i := 0; i < v.NumField(); i++ {
-		f := v.Field(i)
-		if f.IsNil() {
-			continue
-		}
-		opts = f.Elem().FieldByName("Options").Interface().(VinoOptions)
-		cmd = f.Elem().FieldByName("Command").Interface().(cli.Command)
-		break
+	switch {
+	case vinocCommands.hook != nil:
+		return HookMain(*vinocCommands.hook)
+	case vinocCommands.runc != nil:
+		return RuncMain(*vinocCommands.runc)
+	case vinocCommands.launcher != nil:
+		return RunWine(*vinocCommands.launcher)
 	}
 
-	if cmd == nil {
-		return fmt.Errorf("no command specified")
-	}
+	return fmt.Errorf("subcommand not supported: %v", args)
+}
 
-	cli, err := runc.NewDelegatingCliClient(opts.DelegatePath, runc.InheritStdin)
+func RuncMain(cmd RuncCommand) error {
+	delegate, err := runc.NewDelegatingCliClient(cmd.DelegatePath, runc.InheritStdin)
 	if err != nil {
 		return fmt.Errorf("failed to create delegating client: %w", err)
 	}
@@ -123,28 +168,55 @@ func RuncMain(args []string) error {
 		return err
 	}
 
+	hookStartArgs, err := cli.ConvertToCmdline(HookStartCommand{})
+	if err != nil {
+		return err
+	}
+
+	hookStartArgs, err = cli.ConvertToCmdline(HookCommand{HookArgs: hookStartArgs})
+	if err != nil {
+		return err
+	}
+
+	hookCreateArgs, err := cli.ConvertToCmdline(HookCreateCommand{})
+	if err != nil {
+		return err
+	}
+
+	hookCreateArgs, err = cli.ConvertToCmdline(HookCommand{HookArgs: hookCreateArgs})
+	if err != nil {
+		return err
+	}
+
 	bundleRewriter := &vino.BundleRewriter{
-		HookPath:                executablePath,
-		CreateContainerHookArgs: []string{HOOK_SUBCOMMAND, "create"},
-		StartContainerHookArgs:  []string{HOOK_SUBCOMMAND, "start"},
+		HookPathBeforePivot:     executablePath,
+		HookPathAfterPivot:      VINO_AFTER_PIVOT_PATH,
+		CreateContainerHookArgs: hookCreateArgs,
+		StartContainerHookArgs:  hookStartArgs,
 		RebindPaths: map[string]string{
-			executablePath: WINE_LAUNCHER_PATH,
+			executablePath: VINO_AFTER_PIVOT_PATH,
 		},
 	}
+
+	wineLauncherArgs, err := cli.ConvertToCmdline(WineLauncherCommand{})
+	if err != nil {
+		return err
+	}
+
 	processRewriter := &vino.ProcessRewriter{
-		WineLauncherPath: WINE_LAUNCHER_PATH,
-		WineLauncherArgs: []string{WINE_LAUNCHER_SUBCOMMAND},
+		WineLauncherPath: VINO_AFTER_PIVOT_PATH,
+		WineLauncherArgs: wineLauncherArgs,
 	}
 
 	w := runc.Wrapper{
 		BundleRewriter:  bundleRewriter,
 		ProcessRewriter: processRewriter,
-		Delegate:        cli,
+		Delegate:        delegate,
 	}
 	if err := w.Run(cmd); err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
-			os.Exit(ee.ExitCode())
+			return err
 		}
 		return fmt.Errorf("command run failed: %w", err)
 	}
@@ -152,17 +224,7 @@ func RuncMain(args []string) error {
 	return nil
 }
 
-func HookMain(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("no hook subcommand")
-	}
-	f, err := os.OpenFile("/var/log/vino-hook.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		return fmt.Errorf("error opening log file: %v", err)
-	}
-	defer f.Close()
-	log.SetOutput(f)
-
+func HookMain(cmd HookCommand) error {
 	var state specs.State
 	if err := json.NewDecoder(os.Stdin).Decode(&state); err != nil {
 		return fmt.Errorf("decode state: %w", err)
@@ -178,8 +240,13 @@ func HookMain(args []string) error {
 		return err
 	}
 
-	switch args[0] {
-	case "start":
+	var hookCommands HookCommands
+	if err := cli.ParseAny(&hookCommands, cmd.HookArgs); err != nil {
+		return err
+	}
+
+	switch {
+	case hookCommands.start != nil:
 		if err = hookEnv.ApplyDevices(devs); err != nil {
 			return err
 		}
@@ -190,7 +257,7 @@ func HookMain(args []string) error {
 	return nil
 }
 
-func RunWine(args []string) (int, error) {
+func RunWine(launcherCmd WineLauncherCommand) error {
 	wine := "wine64"
 	switch strings.ToLower(os.Getenv("WINEARCH")) {
 	case "win32":
@@ -202,6 +269,7 @@ func RunWine(args []string) (int, error) {
 	_, display := os.LookupEnv("DISPLAY")
 	_, xdg := os.LookupEnv("XDG_RUNTIME_DIR")
 
+	args := launcherCmd.Args
 	bin := wine
 	if !(display || xdg) {
 		bin = "xvfb-run"
@@ -215,15 +283,8 @@ func RunWine(args []string) (int, error) {
 	cmd.Stderr = os.Stderr
 
 	err := cmd.Run()
-	if err == nil {
-		return 0, nil
+	if err != nil {
+		return err
 	}
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		if status, ok := ee.ProcessState.Sys().(interface{ ExitStatus() int }); ok {
-			return status.ExitStatus(), ee
-		}
-		return 1, ee
-	}
-	return 127, err
+	return nil
 }

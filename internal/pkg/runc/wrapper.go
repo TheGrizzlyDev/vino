@@ -8,10 +8,11 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 
-	cli "github.com/TheGrizzlyDev/vino/internal/pkg/cli"
+	"github.com/TheGrizzlyDev/vino/internal/pkg/cli"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"golang.org/x/sys/unix"
 )
@@ -30,7 +31,27 @@ type Wrapper struct {
 	Delegate        Cli
 }
 
-func (w *Wrapper) Run(cmd cli.Command) error {
+type RuncCommands struct {
+	Checkpoint *Checkpoint
+	Restore    *Restore
+	Create     *Create
+	Run        *Run
+	Start      *Start
+	Delete     *Delete
+	Pause      *Pause
+	Resume     *Resume
+	Kill       *Kill
+	List       *List
+	Ps         *Ps
+	State      *State
+	Events     *Events
+	Exec       *Exec
+	Spec       *Spec
+	Update     *Update
+	Features   *Features
+}
+
+func (w *Wrapper) Run(cmds RuncCommands) error {
 	if w.Delegate == nil {
 		return fmt.Errorf("wrapper: nil delegate")
 	}
@@ -38,19 +59,15 @@ func (w *Wrapper) Run(cmd cli.Command) error {
 	// Bundle rewriting for commands that reference a bundle.
 	if w.BundleRewriter != nil || w.ProcessRewriter != nil {
 		var bundlePath string
-		switch c := cmd.(type) {
-		case Create:
-			bundlePath = c.Bundle
-		case *Create:
-			bundlePath = c.Bundle
-		case Run:
-			bundlePath = c.Bundle
-		case *Run:
-			bundlePath = c.Bundle
-		case Restore:
-			bundlePath = c.Bundle
-		case *Restore:
-			bundlePath = c.Bundle
+		switch {
+		case cmds.Create != nil:
+			bundlePath = cmds.Create.Bundle
+		case cmds.Run != nil:
+			bundlePath = cmds.Run.Bundle
+		// TODO: check if we actually want to modify a restored bundle
+		//		 or if it is aleady restored with the modifications
+		case cmds.Restore != nil:
+			bundlePath = cmds.Restore.Bundle
 		}
 		if bundlePath != "" {
 			cfg := filepath.Join(bundlePath, "config.json")
@@ -85,21 +102,29 @@ func (w *Wrapper) Run(cmd cli.Command) error {
 	// Process rewriting for exec commands.
 	var tmpProc string
 	if w.ProcessRewriter != nil {
-		switch c := cmd.(type) {
-		case Exec:
-			execCopy := c
-			if err := w.rewriteExec(&execCopy, &tmpProc); err != nil {
-				return err
-			}
-			cmd = execCopy
-		case *Exec:
-			if err := w.rewriteExec(c, &tmpProc); err != nil {
+		switch {
+		case cmds.Exec != nil:
+			if err := w.rewriteExec(cmds.Exec, &tmpProc); err != nil {
 				return err
 			}
 		}
+
+		// TODO: rewrite process in bundle too
 	}
 	if tmpProc != "" {
 		defer os.Remove(tmpProc)
+	}
+
+	v := reflect.ValueOf(cmds)
+
+	var cmd cli.Command
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Field(i)
+		if f.IsNil() {
+			continue
+		}
+		cmd = f.Interface().(cli.Command)
+		break
 	}
 
 	ctx := context.Background()
