@@ -10,6 +10,7 @@ Traditional approaches to running Windows applications in containers require:
 - Manual Wine installation and configuration
 - Complex wrapper scripts
 - Application-specific tweaks and workarounds
+- Back and forth translation between linux and windows commands and paths 
 
 Vino eliminates this complexity by automatically detecting Windows executables and routing them through Wine transparently. Your existing container orchestration tools (Docker, Kubernetes, etc.) work unchanged.
 
@@ -18,14 +19,13 @@ Vino eliminates this complexity by automatically detecting Windows executables a
 - **Zero Configuration**: Windows executables automatically run through wine
 - **OCI Compatible**: Works with standard container tools and orchestration platforms
 - **Transparent Operation**: No changes needed to your container images or deployment manifests
-- **Production Ready**: Built on proven runc foundation with comprehensive command support
+- **Bring Your Own Container Runtime**: Because vinoc is built as a wrapper for runc, any runc compatible runtime can be used to run the container
 
 ## Quick Start
 
 ### Prerequisites
 
-- Linux system with runc installed
-- Wine64 available in your container images
+- Linux system with docker + runc installed
 - Go 1.25+ for building from source
 
 ### Installation
@@ -36,18 +36,6 @@ Build vino from source:
 git clone https://github.com/TheGrizzlyDev/vino.git
 cd vino
 go build -o bin/vino ./cmd/vino
-```
-
-### Basic Usage
-
-Replace runc with vino in your container runtime configuration:
-
-```bash
-# Instead of:
-# runc run mycontainer
-
-# Use:
-./bin/vino runc --delegate_path=/usr/bin/runc run mycontainer
 ```
 
 ### Container Image Requirements
@@ -79,32 +67,12 @@ sudo systemctl restart docker
 docker run --runtime=vino my-windows-app
 ```
 
-### Kubernetes Integration
-
-Use vino as a container runtime in your Kubernetes cluster by configuring it as an OCI runtime in your container runtime (containerd, CRI-O, etc.).
-
-### Development and Testing
-
-```bash
-# Build the project
-go build ./...
-
-# Run tests
-go test ./...
-
-# Integration tests (requires Docker)
-go test -tags e2e ./tests/integration/dind -v
-```
-
 ## How It Works
 
 1. **Process Interception**: Vino intercepts container process creation
-2. **Automatic Detection**: Detects Windows executables and prepends `wine64` or `wine`
+2. **Automatic Detection**: Detects Windows executables and prepends `wine64` or `wine` and set up any forwarding required
 3. **Transparent Delegation**: Passes modified commands to the underlying runc runtime
-4. **Hook Integration**: Uses OCI runtime hooks for seamless integration
+4. **Prestarts wine server**: Using bundle hooks, the wine server is prestarted before allowing the command to run
+5. **Devices and mounts forwarding**: Devices and mounts are forwarded to the external linux container and then symlinked into wine's prefix
 
 Your Windows applications run through Wine automatically, while your container orchestration remains unchanged.
-
-## Contributing
-
-We welcome contributions! Please see our development guidelines in `WARP.md` for coding standards and testing procedures.
