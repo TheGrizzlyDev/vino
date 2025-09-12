@@ -85,8 +85,8 @@ func (HookStartCommand) Slots() cli.Slot {
 }
 
 type HookCommands struct {
-	create *HookCreateCommand
-	start  *HookStartCommand
+	Create *HookCreateCommand
+	Start  *HookStartCommand
 }
 
 type WineLauncherCommand struct {
@@ -249,7 +249,7 @@ func HookMain(cmd HookCommand) error {
 	}
 
 	switch {
-	case hookCommands.start != nil:
+	case hookCommands.Start != nil:
 		if err = hookEnv.ApplyDevices(devs); err != nil {
 			return err
 		}

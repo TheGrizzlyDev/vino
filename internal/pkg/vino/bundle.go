@@ -126,7 +126,7 @@ func (b *BundleRewriter) RewriteBundle(bundle *specs.Spec) error {
 
 	bundle.Hooks.CreateContainer = append(bundle.Hooks.CreateContainer, specs.Hook{
 		Path: b.HookPathBeforePivot,
-		Args: b.CreateContainerHookArgs,
+		Args: append([]string{b.HookPathBeforePivot}, b.CreateContainerHookArgs...),
 	})
 
 	// TODO: for some reason this doesn't work despite the bind to VINO_HOOK_PATH_IN_CONTAINER being present
