@@ -38,6 +38,18 @@ cd vino
 go build -o bin/vino ./cmd/vino
 ```
 
+### Simple demo
+
+```bash
+go run ./internal/cmd/dind-run/main.go
+```
+
+Running this command opens up an interactive shell into a DIND image with vino and a simple wine image preinstalled. Once you're in this shell you can run a vino container by running:
+
+```bash
+docker run -it --rm --runtime=vino wine:24.04 cmd
+```
+
 ### Container Image Requirements
 
 Your container images need wine installed. You can see some examples under `./images/`
