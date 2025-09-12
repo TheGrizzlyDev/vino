@@ -50,8 +50,9 @@ func (Subcommand) slot() {}
 // Group defines a segment of command-line arguments where flags and
 // positional arguments can be mixed.
 type Group struct {
-	// Unordered contains FlagGroup slots. Flags associated with these
-	// groups can appear in any order within this Group's scope.
+	// Unordered contains FlagGroup, Argument, and Arguments slots. Flags
+	// from these groups and positional arguments listed here may appear in
+	// any order within this Group's scope.
 	Unordered []Slot
 
 	// Ordered contains Argument, Arguments, Literal, and Subcommand

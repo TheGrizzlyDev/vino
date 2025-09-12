@@ -144,18 +144,96 @@ func Parse(cmd Command, args []string) error {
 		return m
 	}
 
-	// Recursively parse slots with inherited unordered groups
+	// Recursively parse slots with inherited unordered groups/args
 	idx := 0
 
-	var collectUnordered func(g Group) []string
-	collectUnordered = func(g Group) []string {
-		var names []string
+	type unorderedArg struct {
+		name     string
+		variadic bool
+		consumed bool
+	}
+
+	var collectUnordered func(g Group) ([]string, []*unorderedArg)
+	collectUnordered = func(g Group) ([]string, []*unorderedArg) {
+		var groups []string
+		var argspecs []*unorderedArg
 		for _, u := range g.Unordered {
-			if fg, ok := u.(FlagGroup); ok {
-				names = append(names, fg.Name)
+			switch uu := u.(type) {
+			case FlagGroup:
+				groups = append(groups, uu.Name)
+			case Argument:
+				argspecs = append(argspecs, &unorderedArg{name: uu.Name})
+			case Arguments:
+				argspecs = append(argspecs, &unorderedArg{name: uu.Name, variadic: true})
 			}
 		}
-		return names
+		return groups, argspecs
+	}
+
+	// Consume unordered tokens (flags and arguments) from allowed sets
+	consumeUnordered := func(allowed map[string]*fieldInfo, uargs []*unorderedArg) error {
+		for idx < len(args) {
+			tok := args[idx]
+			if fi, ok := allowed[tok]; ok {
+				idx++
+				if flagTakesValue(fi.val) {
+					if idx >= len(args) {
+						return fmt.Errorf("flag %s requires value", tok)
+					}
+					val := args[idx]
+					idx++
+					if err := setValue(fi.val, val); err != nil {
+						return fmt.Errorf("%s: %w", fi.sf.Name, err)
+					}
+				} else {
+					if err := setValue(fi.val, ""); err != nil {
+						return fmt.Errorf("%s: %w", fi.sf.Name, err)
+					}
+				}
+				continue
+			}
+
+			assigned := false
+			remainingSingles := 0
+			for _, ua := range uargs {
+				if !ua.variadic && !ua.consumed {
+					remainingSingles++
+				}
+			}
+			remainingTokens := len(args) - idx
+			for _, ua := range uargs {
+				if ua.variadic {
+					if remainingSingles == 0 || remainingTokens-1 > remainingSingles {
+						fs := argsByName[ua.name]
+						for _, fi := range fs {
+							if err := setValue(fi.val, tok); err != nil {
+								return fmt.Errorf("%s: %w", fi.sf.Name, err)
+							}
+						}
+						idx++
+						assigned = true
+					}
+				} else if !ua.consumed {
+					fs := argsByName[ua.name]
+					for _, fi := range fs {
+						if err := setValue(fi.val, tok); err != nil {
+							return fmt.Errorf("%s: %w", fi.sf.Name, err)
+						}
+					}
+					idx++
+					ua.consumed = true
+					assigned = true
+				}
+				if assigned {
+					break
+				}
+			}
+			if !assigned {
+				// token doesn't belong to any unordered slot; leave for ordered processing
+				break
+			}
+		}
+		return nil
 	}
 
 	// Consume flags from allowed set greedily; unknown flag ends window (no error here)
@@ -186,8 +264,8 @@ func Parse(cmd Command, args []string) error {
 		return nil
 	}
 
-	var parse func(s Slot, inheritedUnordered []string) error
-	parse = func(s Slot, inheritedUnordered []string) error {
+	var parse func(s Slot, inheritedGroups []string, inheritedArgs []*unorderedArg) error
+	parse = func(s Slot, inheritedGroups []string, inheritedArgs []*unorderedArg) error {
 		switch v := s.(type) {
 		case Group:
 			if idx >= len(args) {
@@ -216,10 +294,13 @@ func Parse(cmd Command, args []string) error {
 				}
 				return fmt.Errorf("missing required arguments")
 			}
-			// Active unordered groups = inherited + this group's unordered
-			localUnordered := append([]string{}, inheritedUnordered...)
-			localUnordered = append(localUnordered, collectUnordered(v)...)
-			unorderedTokens := tokensForGroups(localUnordered)
+			// Active unordered groups/args = inherited + this group's unordered
+			localGroups := append([]string{}, inheritedGroups...)
+			localArgs := append([]*unorderedArg{}, inheritedArgs...)
+			groups, ua := collectUnordered(v)
+			localGroups = append(localGroups, groups...)
+			localArgs = append(localArgs, ua...)
+			unorderedTokens := tokensForGroups(localGroups)
 
 			// Walk ordered items in sequence
 			blockUnordered := false
@@ -232,7 +313,7 @@ func Parse(cmd Command, args []string) error {
 
 				// Greedily consume unordered before this item (unless blocked or this item is a Literal)
 				if _, isLit := v.Ordered[i].(Literal); !blockUnordered && !isLit {
-					if err := consumeFlags(unorderedTokens); err != nil {
+					if err := consumeUnordered(unorderedTokens, localArgs); err != nil {
 						return err
 					}
 				}
@@ -283,15 +364,20 @@ func Parse(cmd Command, args []string) error {
 					}
 				default:
 					// Nested slot (e.g., nested Group)
-					if err := parse(ov, localUnordered); err != nil {
+					if err := parse(ov, localGroups, localArgs); err != nil {
 						return err
 					}
 				}
 				// Greedily consume unordered after this item unless blocked or next ordered is a Literal
 				if !blockUnordered && !nextIsLiteral {
-					if err := consumeFlags(unorderedTokens); err != nil {
+					if err := consumeUnordered(unorderedTokens, localArgs); err != nil {
 						return err
 					}
+				}
+			}
+			if len(v.Ordered) == 0 {
+				if err := consumeUnordered(unorderedTokens, localArgs); err != nil {
+					return err
 				}
 			}
 			return nil
@@ -301,7 +387,7 @@ func Parse(cmd Command, args []string) error {
 		}
 	}
 
-	if err := parse(cmd.Slots(), nil); err != nil {
+	if err := parse(cmd.Slots(), nil, nil); err != nil {
 		return err
 	}
 	if idx != len(args) {

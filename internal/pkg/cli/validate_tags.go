@@ -23,11 +23,20 @@ func ValidateCommandTags(cmd Command) error {
 	walk = func(s Slot) {
 		switch v := s.(type) {
 		case Group:
-			// accumulate unordered flag groups
+			// accumulate unordered flag groups and arguments
 			for _, u := range v.Unordered {
-				if fg, ok := u.(FlagGroup); ok {
-					if name := strings.TrimSpace(fg.Name); name != "" {
+				switch uu := u.(type) {
+				case FlagGroup:
+					if name := strings.TrimSpace(uu.Name); name != "" {
 						allowedGroups[name] = struct{}{}
+					}
+				case Argument:
+					if n := strings.TrimSpace(uu.Name); n != "" {
+						allowedArgs[n] = struct{}{}
+					}
+				case Arguments:
+					if n := strings.TrimSpace(uu.Name); n != "" {
+						allowedArgs[n] = struct{}{}
 					}
 				}
 			}

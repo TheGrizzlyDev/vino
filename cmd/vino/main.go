@@ -104,9 +104,9 @@ func (WineLauncherCommand) Slots() cli.Slot {
 }
 
 type VinocCommands struct {
-	runc     *RuncCommand
-	hook     *HookCommand
-	launcher *WineLauncherCommand
+	Runc     *RuncCommand
+	Hook     *HookCommand
+	Launcher *WineLauncherCommand
 }
 
 func main() {
@@ -116,6 +116,7 @@ func main() {
 	}
 
 	log.Println(err)
+	fmt.Println(err)
 
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
@@ -143,16 +144,16 @@ func run(args []string) error {
 
 	var vinocCommands VinocCommands
 	if err := cli.ParseAny(&vinocCommands, common.VinoArgs); err != nil {
-		return err
+		return fmt.Errorf("cannot parse vino subcommand: %v", err)
 	}
 
 	switch {
-	case vinocCommands.hook != nil:
-		return HookMain(*vinocCommands.hook)
-	case vinocCommands.runc != nil:
-		return RuncMain(*vinocCommands.runc)
-	case vinocCommands.launcher != nil:
-		return RunWine(*vinocCommands.launcher)
+	case vinocCommands.Hook != nil:
+		return HookMain(*vinocCommands.Hook)
+	case vinocCommands.Runc != nil:
+		return RuncMain(*vinocCommands.Runc)
+	case vinocCommands.Launcher != nil:
+		return RunWine(*vinocCommands.Launcher)
 	}
 
 	return fmt.Errorf("subcommand not supported: %v", args)
