@@ -21,6 +21,12 @@ const (
 	VINO_AFTER_PIVOT_PATH = "/run/vino"
 )
 
+var (
+	vinoHookCreateLogPath = "/var/log/vino-hook-create.log"
+	vinoHookStartLogPath  = "/var/log/vino-hook-start.log"
+	wineLauncherLogPath   = "/var/log/wine-launcher.log"
+)
+
 type CommonCommand struct {
 	VinocLogPath *string  `cli_flag:"--vinoc_log_path" cli_group:"common"`
 	VinoArgs     []string `cli_argument:"args"`
@@ -181,12 +187,28 @@ func RuncMain(cmd RuncCommand) error {
 		return err
 	}
 
+	hookStartArgs, err = cli.ConvertToCmdline(CommonCommand{
+		VinocLogPath: &vinoHookStartLogPath,
+		VinoArgs:     hookStartArgs,
+	})
+	if err != nil {
+		return err
+	}
+
 	hookCreateArgs, err := cli.ConvertToCmdline(HookCreateCommand{})
 	if err != nil {
 		return err
 	}
 
 	hookCreateArgs, err = cli.ConvertToCmdline(HookCommand{HookArgs: hookCreateArgs})
+	if err != nil {
+		return err
+	}
+
+	hookCreateArgs, err = cli.ConvertToCmdline(CommonCommand{
+		VinocLogPath: &vinoHookCreateLogPath,
+		VinoArgs:     hookCreateArgs,
+	})
 	if err != nil {
 		return err
 	}
@@ -202,6 +224,14 @@ func RuncMain(cmd RuncCommand) error {
 	}
 
 	wineLauncherArgs, err := cli.ConvertToCmdline(WineLauncherCommand{})
+	if err != nil {
+		return err
+	}
+
+	wineLauncherArgs, err = cli.ConvertToCmdline(CommonCommand{
+		VinocLogPath: &wineLauncherLogPath,
+		VinoArgs:     wineLauncherArgs,
+	})
 	if err != nil {
 		return err
 	}
