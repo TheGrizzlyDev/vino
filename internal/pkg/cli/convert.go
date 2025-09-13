@@ -76,6 +76,18 @@ func ConvertToCmdline(cmd Command) ([]string, error) {
 		return nil
 	}
 
+	var emitGroupArgs func(names []string) error
+	emitGroupArgs = func(names []string) error {
+		for _, name := range names {
+			for _, f := range argsByName[name] {
+				if err := emitArg(&argv, f.val); err != nil {
+					return fmt.Errorf("%T.%s: %w", cmd, f.sf.Name, err)
+				}
+			}
+		}
+		return nil
+	}
+
 	var walk func(Slot) error
 	walk = func(s Slot) error {
 		switch v := s.(type) {
@@ -103,10 +115,16 @@ func ConvertToCmdline(cmd Command) ([]string, error) {
 					}
 				}
 			}
-			unorderedNames := make([]string, 0, len(v.Unordered))
+			unorderedFlagNames := make([]string, 0, len(v.Unordered))
+			unorderedArgNames := make([]string, 0, len(v.Unordered))
 			for _, u := range v.Unordered {
-				if fg, ok := u.(FlagGroup); ok {
-					unorderedNames = append(unorderedNames, fg.Name)
+				switch u := u.(type) {
+				case FlagGroup:
+					unorderedFlagNames = append(unorderedFlagNames, u.Name)
+				case Argument:
+					unorderedArgNames = append(unorderedArgNames, u.Name)
+				case Arguments:
+					unorderedArgNames = append(unorderedArgNames, u.Name)
 				}
 			}
 			// Helper that walks a nested Slot but injects unordered flag groups
@@ -118,11 +136,17 @@ func ConvertToCmdline(cmd Command) ([]string, error) {
 			walkInject = func(s Slot, outerInjected bool) (bool, error) {
 				switch nv := s.(type) {
 				case Group:
-					// Prepare nested group's unordered flags and placement.
-					nestedUnordered := make([]string, 0, len(nv.Unordered))
+					// Prepare nested group's unordered flags and arguments and placement.
+					nestedUnorderedFlagNames := make([]string, 0, len(nv.Unordered))
+					nestedUnorderedArgNames := make([]string, 0, len(nv.Unordered))
 					for _, u := range nv.Unordered {
-						if fg, ok := u.(FlagGroup); ok {
-							nestedUnordered = append(nestedUnordered, fg.Name)
+						switch u := u.(type) {
+						case FlagGroup:
+							nestedUnorderedFlagNames = append(nestedUnorderedFlagNames, u.Name)
+						case Argument:
+							nestedUnorderedArgNames = append(nestedUnorderedArgNames, u.Name)
+						case Arguments:
+							nestedUnorderedArgNames = append(nestedUnorderedArgNames, u.Name)
 						}
 					}
 					// Determine if nested wants flags after first argument (only update).
@@ -157,42 +181,54 @@ func ConvertToCmdline(cmd Command) ([]string, error) {
 						switch oov := oo.(type) {
 						case Subcommand:
 							argv = append(argv, oov.Value)
-							if !outerInjected && len(unorderedNames) > 0 && !placeAfterFirstArg {
-								if err := emitGroupFlags(unorderedNames); err != nil {
+							if !outerInjected && (len(unorderedFlagNames) > 0 || len(unorderedArgNames) > 0) && !placeAfterFirstArg {
+								if err := emitGroupFlags(unorderedFlagNames); err != nil {
+									return outerInjected, err
+								}
+								if err := emitGroupArgs(unorderedArgNames); err != nil {
 									return outerInjected, err
 								}
 								outerInjected = true
 							}
-							if !nestedInjected && len(nestedUnordered) > 0 && !nestedPlaceAfterFirstArg {
-								if err := emitGroupFlags(nestedUnordered); err != nil {
+							if !nestedInjected && (len(nestedUnorderedFlagNames) > 0 || len(nestedUnorderedArgNames) > 0) && !nestedPlaceAfterFirstArg {
+								if err := emitGroupFlags(nestedUnorderedFlagNames); err != nil {
+									return outerInjected, err
+								}
+								if err := emitGroupArgs(nestedUnorderedArgNames); err != nil {
 									return outerInjected, err
 								}
 								nestedInjected = true
 							}
 						case Literal:
-							if !outerInjected && len(unorderedNames) > 0 && !placeAfterFirstArg {
-								if err := emitGroupFlags(unorderedNames); err != nil {
+							if !outerInjected && (len(unorderedFlagNames) > 0 || len(unorderedArgNames) > 0) && !placeAfterFirstArg {
+								if err := emitGroupFlags(unorderedFlagNames); err != nil {
+									return outerInjected, err
+								}
+								if err := emitGroupArgs(unorderedArgNames); err != nil {
 									return outerInjected, err
 								}
 								outerInjected = true
 							}
 							argv = append(argv, oov.Value)
 						case Argument:
-							if !nestedInjected && len(nestedUnordered) > 0 && nestedPlaceAfterFirstArg {
+							if !nestedInjected && (len(nestedUnorderedFlagNames) > 0 || len(nestedUnorderedArgNames) > 0) && nestedPlaceAfterFirstArg {
 								// emit nested flags after first argument
 								for _, f := range argsByName[oov.Name] {
 									if err := emitArg(&argv, f.val); err != nil {
 										return outerInjected, fmt.Errorf("%T.%s: %w", cmd, f.sf.Name, err)
 									}
 								}
-								if err := emitGroupFlags(nestedUnordered); err != nil {
+								if err := emitGroupFlags(nestedUnorderedFlagNames); err != nil {
+									return outerInjected, err
+								}
+								if err := emitGroupArgs(nestedUnorderedArgNames); err != nil {
 									return outerInjected, err
 								}
 								nestedInjected = true
 								// continue to next item
 								continue
 							}
-							if !outerInjected && len(unorderedNames) > 0 && placeAfterFirstArg {
+							if !outerInjected && (len(unorderedFlagNames) > 0 || len(unorderedArgNames) > 0) && placeAfterFirstArg {
 								// emit after the first argument
 								// but we need the argument first
 								for _, f := range argsByName[oov.Name] {
@@ -200,7 +236,10 @@ func ConvertToCmdline(cmd Command) ([]string, error) {
 										return outerInjected, fmt.Errorf("%T.%s: %w", cmd, f.sf.Name, err)
 									}
 								}
-								if err := emitGroupFlags(unorderedNames); err != nil {
+								if err := emitGroupFlags(unorderedFlagNames); err != nil {
+									return outerInjected, err
+								}
+								if err := emitGroupArgs(unorderedArgNames); err != nil {
 									return outerInjected, err
 								}
 								outerInjected = true
@@ -213,8 +252,11 @@ func ConvertToCmdline(cmd Command) ([]string, error) {
 								}
 							}
 						case Arguments:
-							if !outerInjected && len(unorderedNames) > 0 && !placeAfterFirstArg {
-								if err := emitGroupFlags(unorderedNames); err != nil {
+							if !outerInjected && (len(unorderedFlagNames) > 0 || len(unorderedArgNames) > 0) && !placeAfterFirstArg {
+								if err := emitGroupFlags(unorderedFlagNames); err != nil {
+									return outerInjected, err
+								}
+								if err := emitGroupArgs(unorderedArgNames); err != nil {
 									return outerInjected, err
 								}
 								outerInjected = true
@@ -232,6 +274,14 @@ func ConvertToCmdline(cmd Command) ([]string, error) {
 							return outerInjected, err
 						}
 					}
+					if !nestedInjected && (len(nestedUnorderedFlagNames) > 0 || len(nestedUnorderedArgNames) > 0) {
+						if err := emitGroupFlags(nestedUnorderedFlagNames); err != nil {
+							return outerInjected, err
+						}
+						if err := emitGroupArgs(nestedUnorderedArgNames); err != nil {
+							return outerInjected, err
+						}
+					}
 				}
 				return outerInjected, nil
 			}
@@ -246,23 +296,32 @@ func ConvertToCmdline(cmd Command) ([]string, error) {
 				switch ov := o.(type) {
 				case Subcommand:
 					argv = append(argv, ov.Value)
-					if !placeAfterFirstArg && !insertedUnordered && len(unorderedNames) > 0 {
-						if err := emitGroupFlags(unorderedNames); err != nil {
+					if !placeAfterFirstArg && !insertedUnordered && (len(unorderedFlagNames) > 0 || len(unorderedArgNames) > 0) {
+						if err := emitGroupFlags(unorderedFlagNames); err != nil {
+							return err
+						}
+						if err := emitGroupArgs(unorderedArgNames); err != nil {
 							return err
 						}
 						insertedUnordered = true
 					}
 				case Literal:
-					if !placeAfterFirstArg && !insertedUnordered && len(unorderedNames) > 0 {
-						if err := emitGroupFlags(unorderedNames); err != nil {
+					if !placeAfterFirstArg && !insertedUnordered && (len(unorderedFlagNames) > 0 || len(unorderedArgNames) > 0) {
+						if err := emitGroupFlags(unorderedFlagNames); err != nil {
+							return err
+						}
+						if err := emitGroupArgs(unorderedArgNames); err != nil {
 							return err
 						}
 						insertedUnordered = true
 					}
 					argv = append(argv, ov.Value)
 				case Argument:
-					if !placeAfterFirstArg && !insertedUnordered && len(unorderedNames) > 0 {
-						if err := emitGroupFlags(unorderedNames); err != nil {
+					if !placeAfterFirstArg && !insertedUnordered && (len(unorderedFlagNames) > 0 || len(unorderedArgNames) > 0) {
+						if err := emitGroupFlags(unorderedFlagNames); err != nil {
+							return err
+						}
+						if err := emitGroupArgs(unorderedArgNames); err != nil {
 							return err
 						}
 						insertedUnordered = true
@@ -272,15 +331,21 @@ func ConvertToCmdline(cmd Command) ([]string, error) {
 							return fmt.Errorf("%T.%s: %w", cmd, f.sf.Name, err)
 						}
 					}
-					if placeAfterFirstArg && !insertedUnordered && len(unorderedNames) > 0 {
-						if err := emitGroupFlags(unorderedNames); err != nil {
+					if placeAfterFirstArg && !insertedUnordered && (len(unorderedFlagNames) > 0 || len(unorderedArgNames) > 0) {
+						if err := emitGroupFlags(unorderedFlagNames); err != nil {
+							return err
+						}
+						if err := emitGroupArgs(unorderedArgNames); err != nil {
 							return err
 						}
 						insertedUnordered = true
 					}
 				case Arguments:
-					if !placeAfterFirstArg && !insertedUnordered && len(unorderedNames) > 0 {
-						if err := emitGroupFlags(unorderedNames); err != nil {
+					if !placeAfterFirstArg && !insertedUnordered && (len(unorderedFlagNames) > 0 || len(unorderedArgNames) > 0) {
+						if err := emitGroupFlags(unorderedFlagNames); err != nil {
+							return err
+						}
+						if err := emitGroupArgs(unorderedArgNames); err != nil {
 							return err
 						}
 						insertedUnordered = true
@@ -304,8 +369,11 @@ func ConvertToCmdline(cmd Command) ([]string, error) {
 					return err
 				}
 			}
-			if !insertedUnordered && len(unorderedNames) > 0 {
-				if err := emitGroupFlags(unorderedNames); err != nil {
+			if !insertedUnordered && (len(unorderedFlagNames) > 0 || len(unorderedArgNames) > 0) {
+				if err := emitGroupFlags(unorderedFlagNames); err != nil {
+					return err
+				}
+				if err := emitGroupArgs(unorderedArgNames); err != nil {
 					return err
 				}
 			}
