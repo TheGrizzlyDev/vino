@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -134,7 +135,6 @@ func main() {
 }
 
 func run(args []string) error {
-
 	var common CommonCommand
 	if err := cli.Parse(&common, os.Args[1:]); err != nil {
 		return err
@@ -246,6 +246,7 @@ func RuncMain(cmd RuncCommand) error {
 		ProcessRewriter: processRewriter,
 		Delegate:        delegate,
 	}
+
 	if err := runc.RunWithArgs(&w, cmd.RuncArgs); err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
@@ -258,6 +259,8 @@ func RuncMain(cmd RuncCommand) error {
 }
 
 func HookMain(cmd HookCommand) error {
+	ctx := context.Background() // TODO move outside to main
+
 	var state specs.State
 	if err := json.NewDecoder(os.Stdin).Decode(&state); err != nil {
 		return fmt.Errorf("decode state: %w", err)
@@ -286,11 +289,37 @@ func HookMain(cmd HookCommand) error {
 		if err = hookEnv.ApplyMounts(mounts); err != nil {
 			return err
 		}
+
+		if err := exec.CommandContext(ctx, "wineserver").Wait(); err != nil {
+			return err
+		}
+
+		if err := exec.CommandContext(ctx, "wineboot").Wait(); err != nil {
+			return err
+		}
 	}
+
 	return nil
 }
 
 func RunWine(launcherCmd WineLauncherCommand) error {
+	if strings.Index(launcherCmd.Args[0], "@") == 0 {
+		// TODO: this code can be simplified a bit and merge most
+		//       logic with the branch below
+		bin := strings.TrimPrefix(launcherCmd.Args[0], "@")
+		cmd := exec.Command(bin, launcherCmd.Args[1:]...)
+		cmd.Env = os.Environ()
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		err := cmd.Run()
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
 	wine := "wine64"
 	switch strings.ToLower(os.Getenv("WINEARCH")) {
 	case "win32":
